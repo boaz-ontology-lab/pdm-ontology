@@ -94,6 +94,7 @@ docs: 표기 규칙에 API 키 규칙 추가
 | `ontology/objects.yaml`, `ontology/links.yaml` | B |
 | `ontology/actions.yaml` | C |
 | `db/`, `data/` | A |
+| `docs/api.md` | 공통 규칙은 B와 C, 조회 API는 B, 액션 API는 C |
 | `docs/conventions.md`, `docs/decisions.md` | 세 명 모두 |
 
 - 리뷰어는 하루 안에 응답한다. 바로 못 보면 언제 볼지 댓글로 남긴다.
