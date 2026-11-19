@@ -1,4 +1,5 @@
-name: 버그
+# name이 3자보다 짧으면 GitHub이 템플릿을 조용히 무시한다
+name: 버그 제보
 description: "기대와 다르게 동작하는 것"
 labels: ["bug"]
 body:
