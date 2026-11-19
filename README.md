@@ -1,5 +1,7 @@
 # pdm-ontology
 
+[![CI](https://github.com/boaz-ontology-lab/pdm-ontology/actions/workflows/ci.yml/badge.svg)](https://github.com/boaz-ontology-lab/pdm-ontology/actions/workflows/ci.yml)
+
 Microsoft Azure Predictive Maintenance 데이터 위에 **온톨로지와 데이터 거버넌스 계층**을 얹는 2주 미니 프로젝트다.
 설비, 고장, 교체 기록 같은 데이터를 "객체와 링크"로 정의하고, 조회는 자유롭게 하되 쓰기는 권한과 사전조건을 거친 **액션**으로만 하게 만든다.
 카탈로그, 태그, 리니지는 OpenMetadata가 맡는다.
