@@ -1,3 +1,4 @@
+# name이 3자보다 짧으면 GitHub이 템플릿을 조용히 무시한다
 name: 스펙 변경
 description: "객체, 링크, 속성, 액션 정의를 바꾸자는 제안"
 labels: ["spec"]
