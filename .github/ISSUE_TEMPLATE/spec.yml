@@ -1,0 +1,48 @@
+name: 스펙 변경
+description: "객체, 링크, 속성, 액션 정의를 바꾸자는 제안"
+labels: ["spec"]
+body:
+  - type: dropdown
+    id: files
+    attributes:
+      label: 바꾸는 파일
+      multiple: true
+      options:
+        - ontology/objects.yaml
+        - ontology/links.yaml
+        - ontology/actions.yaml
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: 무엇을 바꾸나
+      description: "바꾸기 전과 후를 적는다"
+      value: |
+        - 전:
+        - 후:
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: 왜 바꾸나
+    validations:
+      required: true
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: 영향받는 파트
+      description: "해당 파트 담당자에게 리뷰를 요청한다"
+      options:
+        - label: A (데이터, DB)
+        - label: B (객체, 링크, 조회 엔진)
+        - label: C (액션)
+  - type: checkboxes
+    id: followups
+    attributes:
+      label: 함께 할 일
+      options:
+        - label: 다이어그램과 PNG 갱신
+        - label: docs/decisions.md에 결정 기록
+        - label: docs/conventions.md 표기 규칙 확인
