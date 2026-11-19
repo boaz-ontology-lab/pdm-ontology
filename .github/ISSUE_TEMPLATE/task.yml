@@ -1,0 +1,39 @@
+name: 작업
+description: "구현, 문서, 설정 등 할 일"
+body:
+  - type: dropdown
+    id: part
+    attributes:
+      label: 파트
+      options:
+        - A (데이터, DB, 가상 시계, OpenMetadata)
+        - B (온톨로지 코어, 조회 엔진)
+        - C (액션, 권한, 감사 로그)
+        - 공통
+    validations:
+      required: true
+  - type: textarea
+    id: todo
+    attributes:
+      label: 할 일
+      description: "무엇을 하는지 적는다"
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: input
+    id: waiting
+    attributes:
+      label: 기다리는 것
+      description: "다른 사람의 작업이나 결정이 먼저 필요하면 이슈 번호를 적고 blocked 라벨을 붙인다"
+      placeholder: "#12"
+  - type: textarea
+    id: refs
+    attributes:
+      label: 참고
+      description: "관련 결정 번호, 문서, 다이어그램"
