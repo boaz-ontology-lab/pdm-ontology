@@ -64,4 +64,5 @@ make check    # 린트, 테스트, 표기 규칙 검사 (CI와 같음)
 
 - [협업 규칙](CONTRIBUTING.md): 브랜치, 커밋, PR, 리뷰
 - [표기 규칙](docs/conventions.md): 이름, 코드 값, DB, API
+- [API 명세](docs/api.md): 공통 규칙, 조회 API, 액션 API, 감사 로그 API
 - [결정 기록](docs/decisions.md): 팀에서 정한 것과 아직 정하지 않은 것
