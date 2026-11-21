@@ -25,7 +25,8 @@ Microsoft Azure Predictive Maintenance 데이터 위에 **온톨로지와 데이
 pdm-ontology/
 ├── ontology/            온톨로지 스펙 (objects, links, actions)
 ├── app/                 FastAPI 앱 (조회 엔진, 액션 엔진, 정책, 가상 시계)
-├── db/                  스키마, 뷰, 권한 SQL
+├── infra/               Docker Compose (Postgres, OpenMetadata)
+├── db/                  스키마, 뷰, 권한 SQL (Postgres 첫 실행 때 자동 적용)
 ├── data/                적재, 합성 데이터 스크립트 (원본 CSV는 data/raw/, git 제외)
 ├── scripts/             개발용 스크립트 (표기 규칙 검사 등)
 ├── tests/
@@ -59,6 +60,7 @@ make check    # 린트, 테스트, 표기 규칙 검사 (CI와 같음)
 | `make format` | ruff 자동 수정 |
 | `make test` | pytest |
 | `make conventions` | `ontology/*.yaml`이 표기 규칙을 따르는지 검사 |
+| `make up` / `make down` | Postgres, OpenMetadata 실행과 중지 (UI: http://localhost:8585, admin@open-metadata.org / admin) |
 
 ## 문서
 
