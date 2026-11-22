@@ -1,0 +1,293 @@
+# ontology/actions.yaml
+# 액션마다 누가 실행할 수 있는지, 언제 실행할 수 있는지, 실행하면 무엇이 바뀌는지를 정의한다.
+# 액션 엔진은 이 파일만 읽고 동작한다. 응답 모양은 docs/api.md를 본다.
+#
+# ---------------------------------------------------------------------------
+# 검사 순서
+# ---------------------------------------------------------------------------
+#   1. 사용자 확인    X-User-Id로 사용자를 찾는다. 없으면 401 UNKNOWN_USER
+#   2. 입력 검증      input 스키마. 실패하면 422 INVALID_INPUT
+#   3. 대상 찾기      input에서 target 객체의 primary key와 같은 이름의 필드로 찾는다. 없으면 404 NOT_FOUND
+#   4. 권한          allowed_roles, permission_criteria. 실패하면 403
+#   5. 사전조건       criteria. 실패하면 409
+#   6. 실행          effect를 위에서부터 차례로, 하나의 트랜잭션으로
+#   7. 감사 로그      1~6 결과와 상관없이 호출마다 한 행 (1에서 실패하면 actor 없이)
+#
+# - 권한 단계에서 막히면 사전조건은 검사하지 않는다.
+# - 같은 단계 안의 조건은 전부 검사해서 실패한 것을 모두 violations에 담고, 첫 번째를 reasonCode로 쓴다.
+#   그래서 목록의 순서가 곧 거부 사유의 우선순위다.
+# - 거부되면 effect는 하나도 실행하지 않는다.
+#
+# ---------------------------------------------------------------------------
+# 키
+# ---------------------------------------------------------------------------
+#   description           사람이 읽는 설명
+#   target                액션 대상 객체 타입
+#   input                 요청 본문 스키마
+#     type                int | string | enum
+#     required            true면 필수
+#     values              enum 값 (UPPER_SNAKE)
+#     ref                 값이 이 객체 타입의 primary key로 있어야 한다. 없으면 422 INVALID_INPUT
+#     max_length          string 최대 길이
+#   allowed_roles         실행할 수 있는 역할
+#   permission_criteria   역할은 맞지만 대상 범위가 다를 때 (예: 담당자가 아님). 권한 단계에서 검사
+#   criteria              사전조건
+#     description         사람이 읽는 조건
+#     when                이 식이 참일 때만 검사한다 (선택)
+#     check               참이어야 통과하는 식
+#     reason              실패했을 때의 거부 코드 (reason_codes에 있어야 한다)
+#     message             reason_codes의 기본 메시지 대신 쓸 문장 (선택). {식}은 값으로 바뀐다
+#     detail              실패했을 때 violations[].detail에 넣을 값. 키마다 식
+#   effect                실행할 일 (위에서부터 차례로)
+#     create + values     객체를 새로 만든다. 만든 객체는 응답의 created에 들어간다
+#     set                 { object: 식, field: 속성, value: 식 }. 저장 속성만 바꿀 수 있다
+#     when                이 식이 참일 때만 실행한다 (선택)
+#   observe               실행 전후로 값을 비교해 응답의 changes에 넣을 것
+#     objects             객체 하나나 목록을 돌려주는 식 (실행 전에 한 번 평가해 대상을 고정한다)
+#     fields              비교할 속성 (파생 속성 포함)
+#   remaining             응답의 remaining. 키마다 식. 실행이 끝난 뒤에 평가한다
+#
+# set으로 바꾼 값은 observe에 적지 않아도 changes에 들어간다.
+# 파생 속성(status, isResolved 등)은 set으로 바꿀 수 없다. 저장 값이 바뀌면 조회할 때 다시 계산된다 (결정 11, 12).
+#
+# ---------------------------------------------------------------------------
+# 식 문법 (Python 식의 일부만 허용한다)
+# ---------------------------------------------------------------------------
+#   target                액션 대상 객체
+#   actor                 실행한 사용자 (User 객체)
+#   input                 요청 본문 (input.machineId)
+#   now                   가상 시계 시각
+#   Machine(1)            객체 타입 이름(id)으로 객체 하나를 찾는다. 없으면 null
+#   x.속성                 objects.yaml의 properties와 derived. null의 속성은 null이다
+#   x.링크                 links.yaml의 링크를 따라간다. 1:N이면 목록, N:1이면 객체 하나나 null
+#                         역방향은 links.yaml의 inverse 이름으로 부른다 (예: machine.hasWorkOrders)
+#   READY, CORRECTIVE     따옴표 없는 UPPER_SNAKE 이름은 같은 글자의 코드 값이다
+#   null, true, false     값
+#   == != < <= > >= in, not in, and, or, not, a if 조건 else b
+#   [x for x in 목록 if 조건], (x for x in 목록 if 조건)
+#   any(목록), none(목록), count(목록), first(목록), coalesce(a, b, ...)
+#
+# 목록은 primary key 오름차순이다. 고장은 설비 안에서 번호 순서가 시간 순서다 (docs/synthetic-data.md).
+# 객체를 응답(detail, remaining)에 넣으면 저장 속성(properties)만 담는다.
+# 위에 없는 문법(대입, 람다, 밑줄로 시작하는 속성, 임의 함수 호출)은 엔진이 거부한다.
+#
+# 사용 링크: hasFailures(Machine→FailureEvent),
+#           hasWorkOrders(Machine→WorkOrder, targets의 역),
+#           hasInspectionRequests(Machine→InspectionRequest, concerns의 역),
+#           addressedBy(FailureEvent→WorkOrder, addresses의 역)
+# 사용 파생 속성: Machine.status, Machine.hasOpenFailure, Machine.hasOpenWorkOrder,
+#                Machine.errorCount7d, Machine.riskLevel, FailureEvent.isResolved
+
+# 응답 거부 코드
+
+reason_codes:
+  ROLE_NOT_ALLOWED:   { stage: PERMISSION,   message: "이 역할은 이 액션을 실행할 수 없습니다" }
+  NOT_ASSIGNEE:       { stage: PERMISSION,   message: "이 작업지시의 담당자가 아닙니다" }
+  INVALID_STATE:      { stage: PRECONDITION, message: "설비, 작업지시, 점검 요청의 상태가 맞지 않습니다" }
+  UNRESOLVED_FAILURE: { stage: PRECONDITION, message: "미해결 고장이 남아 있습니다" }
+  OPEN_WORK_ORDER:    { stage: PRECONDITION, message: "OPEN 작업지시가 남아 있거나 중복입니다" }
+  DUPLICATE_REQUEST:  { stage: PRECONDITION, message: "같은 설비에 처리되지 않은 점검 요청이 있습니다" }
+  INVALID_ASSIGNEE:   { stage: PRECONDITION, message: "작업지시 담당자는 MECHANIC이어야 합니다" }
+
+# ---------------------------------------------------------------------------
+# 점검 요청
+
+requestInspection:
+  description: "이상 징후가 있는 가동 중 설비에 점검을 요청한다. 설비를 멈추지 않는다."
+  target: Machine
+  input:
+    machineId: { type: int, required: true }
+    reason: { type: string, required: true, max_length: 500 }
+  allowed_roles: [FIELD_WORKER, MANAGER]
+  criteria:
+    - description: "설비가 RUNNING이다"
+      check: "target.status == RUNNING"
+      reason: INVALID_STATE
+      detail: { currentStatus: "target.status" }
+    - description: "같은 설비에 REQUESTED 점검 요청이 없다"
+      check: "none(r.status == REQUESTED for r in target.hasInspectionRequests)"
+      reason: DUPLICATE_REQUEST
+      detail:
+        existingRequests: "[r for r in target.hasInspectionRequests if r.status == REQUESTED]"
+  effect:
+    - create: InspectionRequest
+      values:
+        machineId: "target.machineId"
+        requestedBy: "actor.userId"
+        reason: "input.reason"
+        status: "REQUESTED"
+        createdAt: "now"
+        # 근거 스냅샷은 클라이언트가 보내지 않는다. 서버가 요청 시점 값으로 채운다
+        evidence:
+          errorCount7d: "target.errorCount7d"
+          riskLevel: "target.riskLevel"
+
+# ---------------------------------------------------------------------------
+# 작업 지시 생성
+
+createWorkOrder:
+  description: "고장 수리나 예방 정비 작업지시를 만들고 정비사에게 맡긴다."
+  target: Machine
+  input:
+    machineId: { type: int, required: true }
+    # comp1~comp4가 아니면 입력 오류(422)다 (결정 16). 부품 목록은 Component 객체 하나에만 둔다
+    comp: { type: string, required: true, ref: Component }
+    type: { type: enum, values: [CORRECTIVE, PREVENTIVE], required: true }
+    assigneeId: { type: string, required: true, ref: User }
+    failureId: { type: int, required: false, ref: FailureEvent }
+    inspectionRequestId: { type: int, required: false, ref: InspectionRequest }
+  allowed_roles: [MANAGER]
+  criteria:
+    - description: "담당자가 MECHANIC이다"
+      check: "User(input.assigneeId).role == MECHANIC"
+      reason: INVALID_ASSIGNEE
+      detail: { assigneeId: "input.assigneeId", role: "User(input.assigneeId).role" }
+    - description: "같은 설비, 같은 부품에 OPEN 작업지시가 없다"
+      check: "none(w.status == OPEN and w.comp == input.comp for w in target.hasWorkOrders)"
+      reason: OPEN_WORK_ORDER
+      detail:
+        workOrders: "[w for w in target.hasWorkOrders if w.status == OPEN and w.comp == input.comp]"
+    - description: "CORRECTIVE면 그 부품에 미해결 고장이 있다"
+      when: "input.type == CORRECTIVE"
+      check: "any(not f.isResolved and f.comp == input.comp for f in target.hasFailures)"
+      reason: INVALID_STATE
+      message: "{input.comp}에 미해결 고장이 없어 고장 수리 작업지시를 만들 수 없습니다"
+      detail: { comp: "input.comp" }
+    - description: "PREVENTIVE면 설비가 RUNNING이다"
+      when: "input.type == PREVENTIVE"
+      check: "target.status == RUNNING"
+      reason: INVALID_STATE
+      message: "설비가 {target.status} 상태라 예방 정비 작업지시를 만들 수 없습니다"
+      detail: { currentStatus: "target.status" }
+    - description: "failureId를 보내면 CORRECTIVE이고, 이 설비 이 부품의 미해결 고장이다"
+      when: "input.failureId != null"
+      check: >-
+        input.type == CORRECTIVE
+        and FailureEvent(input.failureId).machineId == target.machineId
+        and FailureEvent(input.failureId).comp == input.comp
+        and not FailureEvent(input.failureId).isResolved
+      reason: INVALID_STATE
+      message: "고장 {input.failureId}은 이 작업지시로 고칠 수 있는 고장이 아닙니다"
+      detail: { failure: "FailureEvent(input.failureId)" }
+    - description: "inspectionRequestId를 보내면 이 설비의 REQUESTED 점검 요청이다"
+      when: "input.inspectionRequestId != null"
+      check: >-
+        InspectionRequest(input.inspectionRequestId).machineId == target.machineId
+        and InspectionRequest(input.inspectionRequestId).status == REQUESTED
+      reason: INVALID_STATE
+      message: "점검 요청 {input.inspectionRequestId}은 작업지시로 바꿀 수 없는 상태입니다"
+      detail: { inspectionRequest: "InspectionRequest(input.inspectionRequestId)" }
+  effect:
+    - create: WorkOrder
+      values:
+        machineId: "target.machineId"
+        comp: "input.comp"
+        type: "input.type"
+        status: "OPEN"
+        assigneeId: "input.assigneeId"
+        createdBy: "actor.userId"
+        createdAt: "now"
+        completedAt: "null"
+        # failureId를 보내지 않은 CORRECTIVE는 그 부품의 미해결 고장 중 가장 이른 것을 잇는다 (addresses 링크)
+        failureId: >-
+          coalesce(input.failureId,
+                   first(f.failureId for f in target.hasFailures
+                         if input.type == CORRECTIVE and not f.isResolved and f.comp == input.comp))
+        inspectionRequestId: "input.inspectionRequestId"
+    - when: "input.inspectionRequestId != null"
+      set:
+        object: "InspectionRequest(input.inspectionRequestId)"
+        field: status
+        value: "CONVERTED"
+  observe:
+    - objects: "target"
+      fields: [status]
+  remaining:
+    # 아직 OPEN 작업지시가 걸리지 않은 미해결 고장. 동시 고장에서 하나만 작업지시를 냈을 때 남은 것
+    uncoveredFailures: >-
+      [f for f in target.hasFailures
+       if not f.isResolved and none(w.status == OPEN for w in f.addressedBy)]
+
+# ---------------------------------------------------------------------------
+# 교체 완료
+
+completeReplacement:
+  description: "맡은 작업지시의 부품 교체를 끝낸다"
+  target: WorkOrder
+  input:
+    workOrderId: { type: int, required: true }
+  allowed_roles: [MECHANIC]
+  permission_criteria:
+    - description: "실행자가 이 작업지시의 담당자다"
+      check: "target.assigneeId == actor.userId"
+      reason: NOT_ASSIGNEE
+      detail: { assigneeId: "target.assigneeId" }
+  criteria:
+    - description: "작업지시가 OPEN이다"
+      check: "target.status == OPEN"
+      reason: INVALID_STATE
+      message: "작업지시가 {target.status} 상태라 교체 완료할 수 없습니다"
+      detail: { workOrderStatus: "target.status" }
+  effect:
+    # 원본 교체 기록은 건드리지 않는다. ops.maintenance_log에 source가 ACTION인 행으로 추가된다 (결정 6)
+    # 고장의 isResolved는 resolvedBy 링크가 이 기록을 찾아서 바뀐다. 고장에는 쓰지 않는다 (결정 11)
+    - create: Maintenance
+      values:
+        datetime: "now"
+        machineId: "target.machineId"
+        comp: "target.comp"
+        source: "ACTION"
+        workOrderId: "target.workOrderId"
+    - set: { object: "target", field: status, value: "DONE" }
+    - set: { object: "target", field: completedAt, value: "now" }
+    - when: "target.inspectionRequestId != null"
+      set:
+        object: "InspectionRequest(target.inspectionRequestId)"
+        field: status
+        value: "CLOSED"
+  observe:
+    - objects: "[f for f in Machine(target.machineId).hasFailures if not f.isResolved]"
+      fields: [isResolved]
+    - objects: "Machine(target.machineId)"
+      fields: [status]
+  remaining:
+    unresolvedFailures: "[f for f in Machine(target.machineId).hasFailures if not f.isResolved]"
+    openWorkOrders: "[w for w in Machine(target.machineId).hasWorkOrders if w.status == OPEN]"
+
+# ---------------------------------------------------------------------------
+# 재가동
+
+restartMachine:
+  description: "수리가 끝난 설비를 다시 가동한다"
+  target: Machine
+  input:
+    machineId: { type: int, required: true }
+  allowed_roles: [MANAGER]
+  criteria:
+    # 순서 주의: 데모 2번에서 미해결 고장이 있으면 UNRESOLVED_FAILURE가 첫 사유로 나와야 한다
+    - description: "미해결 고장이 없다"
+      check: "not target.hasOpenFailure"
+      reason: UNRESOLVED_FAILURE
+      message: "미해결 고장 {count(f for f in target.hasFailures if not f.isResolved)}건이 남아 있어 재가동할 수 없습니다"
+      detail:
+        failures: "[f for f in target.hasFailures if not f.isResolved]"
+    - description: "OPEN 작업지시가 없다"
+      check: "not target.hasOpenWorkOrder"
+      reason: OPEN_WORK_ORDER
+      message: "OPEN 작업지시 {count(w for w in target.hasWorkOrders if w.status == OPEN)}건이 남아 있어 재가동할 수 없습니다"
+      detail:
+        workOrders: "[w for w in target.hasWorkOrders if w.status == OPEN]"
+    # 위 두 조건이 이미 실패했으면 상태 사유는 덧붙이지 않는다 (DOWN, MAINTENANCE는 위 두 조건이 설명한다)
+    - description: "설비가 READY다"
+      when: "not target.hasOpenFailure and not target.hasOpenWorkOrder"
+      check: "target.status == READY"
+      reason: INVALID_STATE
+      message: "설비가 {target.status} 상태라 재가동할 수 없습니다. READY일 때만 재가동합니다"
+      detail: { currentStatus: "target.status" }
+  effect:
+    # 처음 재가동하면 ops.machine_state에 행이 생기고, 이후에는 값만 바뀐다 (결정 12)
+    - set: { object: "target", field: lastRestartAt, value: "now" }
+    - set: { object: "target", field: lastRestartBy, value: "actor.userId" }
+  observe:
+    - objects: "target"
+      fields: [status]
