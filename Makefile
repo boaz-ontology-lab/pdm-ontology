@@ -1,4 +1,4 @@
-.PHONY: setup lint format test conventions check
+.PHONY: setup lint format test conventions check up up-db down
 
 setup:        ## 의존성 설치
 	uv sync
@@ -18,3 +18,12 @@ conventions:  ## ontology/*.yaml 표기 규칙 검사
 	uv run python scripts/check_conventions.py ontology
 
 check: lint test conventions  ## PR 올리기 전에 CI와 같은 검사
+
+up:           ## Postgres + OpenMetadata 실행 (OpenMetadata UI: http://localhost:8585)
+	docker compose -f infra/docker-compose.yml up -d
+
+up-db:        ## Postgres만 실행 (OpenMetadata 없이, 조회·액션 개발용)
+	docker compose -f infra/docker-compose.yml up -d postgres
+
+down:         ## 전체 중지
+	docker compose -f infra/docker-compose.yml down
