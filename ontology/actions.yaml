@@ -59,8 +59,8 @@
 #   now                   가상 시계 시각
 #   Machine(1)            객체 타입 이름(id)으로 객체 하나를 찾는다. 없으면 null
 #   x.속성                 objects.yaml의 properties와 derived. null의 속성은 null이다
-#   x.링크                 links.yaml의 링크를 정방향으로 따라간다. 1:N이면 목록, N:1이면 객체 하나나 null
-#   x.inverse(링크)        링크를 거꾸로 따라간 목록 (예: machine.inverse(targets) = 이 설비의 작업지시)
+#   x.링크                 links.yaml의 링크를 따라간다. 1:N이면 목록, N:1이면 객체 하나나 null
+#                         역방향은 links.yaml의 inverse 이름으로 부른다 (예: machine.hasWorkOrders)
 #   READY, CORRECTIVE     따옴표 없는 UPPER_SNAKE 이름은 같은 글자의 코드 값이다
 #   null, true, false     값
 #   == != < <= > >= in, not in, and, or, not, a if 조건 else b
@@ -71,8 +71,10 @@
 # 객체를 응답(detail, remaining)에 넣으면 저장 속성(properties)만 담는다.
 # 위에 없는 문법(대입, 람다, 밑줄로 시작하는 속성, 임의 함수 호출)은 엔진이 거부한다.
 #
-# 사용 링크: hasFailures(Machine→FailureEvent), targets(WorkOrder→Machine),
-#           addresses(WorkOrder→FailureEvent), concerns(InspectionRequest→Machine)
+# 사용 링크: hasFailures(Machine→FailureEvent),
+#           hasWorkOrders(Machine→WorkOrder, targets의 역),
+#           hasInspectionRequests(Machine→InspectionRequest, concerns의 역),
+#           addressedBy(FailureEvent→WorkOrder, addresses의 역)
 # 사용 파생 속성: Machine.status, Machine.hasOpenFailure, Machine.hasOpenWorkOrder,
 #                Machine.errorCount7d, Machine.riskLevel, FailureEvent.isResolved
 
@@ -103,10 +105,10 @@ requestInspection:
       reason: INVALID_STATE
       detail: { currentStatus: "target.status" }
     - description: "같은 설비에 REQUESTED 점검 요청이 없다"
-      check: "none(r.status == REQUESTED for r in target.inverse(concerns))"
+      check: "none(r.status == REQUESTED for r in target.hasInspectionRequests)"
       reason: DUPLICATE_REQUEST
       detail:
-        existingRequests: "[r for r in target.inverse(concerns) if r.status == REQUESTED]"
+        existingRequests: "[r for r in target.hasInspectionRequests if r.status == REQUESTED]"
   effect:
     - create: InspectionRequest
       values:
@@ -141,10 +143,10 @@ createWorkOrder:
       reason: INVALID_ASSIGNEE
       detail: { assigneeId: "input.assigneeId", role: "User(input.assigneeId).role" }
     - description: "같은 설비, 같은 부품에 OPEN 작업지시가 없다"
-      check: "none(w.status == OPEN and w.comp == input.comp for w in target.inverse(targets))"
+      check: "none(w.status == OPEN and w.comp == input.comp for w in target.hasWorkOrders)"
       reason: OPEN_WORK_ORDER
       detail:
-        workOrders: "[w for w in target.inverse(targets) if w.status == OPEN and w.comp == input.comp]"
+        workOrders: "[w for w in target.hasWorkOrders if w.status == OPEN and w.comp == input.comp]"
     - description: "CORRECTIVE면 그 부품에 미해결 고장이 있다"
       when: "input.type == CORRECTIVE"
       check: "any(not f.isResolved and f.comp == input.comp for f in target.hasFailures)"
@@ -204,7 +206,7 @@ createWorkOrder:
     # 아직 OPEN 작업지시가 걸리지 않은 미해결 고장. 동시 고장에서 하나만 작업지시를 냈을 때 남은 것
     uncoveredFailures: >-
       [f for f in target.hasFailures
-       if not f.isResolved and none(w.status == OPEN for w in f.inverse(addresses))]
+       if not f.isResolved and none(w.status == OPEN for w in f.addressedBy)]
 
 # ---------------------------------------------------------------------------
 # 교체 완료
@@ -250,7 +252,7 @@ completeReplacement:
       fields: [status]
   remaining:
     unresolvedFailures: "[f for f in Machine(target.machineId).hasFailures if not f.isResolved]"
-    openWorkOrders: "[w for w in Machine(target.machineId).inverse(targets) if w.status == OPEN]"
+    openWorkOrders: "[w for w in Machine(target.machineId).hasWorkOrders if w.status == OPEN]"
 
 # ---------------------------------------------------------------------------
 # 재가동
@@ -272,9 +274,9 @@ restartMachine:
     - description: "OPEN 작업지시가 없다"
       check: "not target.hasOpenWorkOrder"
       reason: OPEN_WORK_ORDER
-      message: "OPEN 작업지시 {count(w for w in target.inverse(targets) if w.status == OPEN)}건이 남아 있어 재가동할 수 없습니다"
+      message: "OPEN 작업지시 {count(w for w in target.hasWorkOrders if w.status == OPEN)}건이 남아 있어 재가동할 수 없습니다"
       detail:
-        workOrders: "[w for w in target.inverse(targets) if w.status == OPEN]"
+        workOrders: "[w for w in target.hasWorkOrders if w.status == OPEN]"
     # 위 두 조건이 이미 실패했으면 상태 사유는 덧붙이지 않는다 (DOWN, MAINTENANCE는 위 두 조건이 설명한다)
     - description: "설비가 READY다"
       when: "not target.hasOpenFailure and not target.hasOpenWorkOrder"
