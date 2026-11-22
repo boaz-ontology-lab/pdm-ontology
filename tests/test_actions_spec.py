@@ -1,12 +1,11 @@
 """ontology/actions.yaml이 엔진이 읽을 수 있는 모양인지 검사한다.
 
 표기 규칙은 check_conventions가 보고, 여기서는 구조와 식 문법을 본다.
-식이 실제로 맞게 평가되는지는 액션 엔진 테스트에서 본다.
+식 문법은 app.action.expr의 평가기로 검사한다. 값이 맞게 나오는지는 액션 엔진 테스트에서 본다.
 """
 
 from __future__ import annotations
 
-import ast
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,6 +14,8 @@ from typing import Any
 import pytest
 import yaml
 from check_conventions import check_actions
+
+from app.action.expr import ExprError, compile_expr, compile_template
 
 ACTIONS_PATH = Path(__file__).resolve().parents[1] / "ontology" / "actions.yaml"
 
@@ -137,12 +138,15 @@ def test_effects_shape(spec):
                 assert set(effect["set"]) == {"object", "field", "value"}, name
 
 
-def test_expressions_parse(spec):
-    """식은 모두 Python 식으로 파싱되어야 한다. 허용 문법인지는 엔진이 다시 본다."""
+def test_expressions_compile(spec):
+    """식은 모두 평가기가 허용하는 문법이어야 한다. 값이 맞는지는 액션 엔진 테스트에서 본다."""
     for name, action in _actions(spec).items():
         for expr in _expressions(action):
             assert isinstance(expr, str), f"{name}: 식은 문자열이어야 합니다: {expr!r}"
             try:
-                ast.parse(expr.strip(), mode="eval")
-            except SyntaxError as e:
-                pytest.fail(f"{name}: 식을 파싱할 수 없습니다: {expr!r} ({e.msg})")
+                compile_expr(expr)
+            except ExprError as e:
+                pytest.fail(f"{name}: {e}")
+        for _, criterion in _criteria(action):
+            if "message" in criterion:
+                compile_template(criterion["message"])
