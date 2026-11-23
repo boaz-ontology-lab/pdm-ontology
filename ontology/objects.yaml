@@ -1,0 +1,281 @@
+# ontology/objects.yaml
+# 객체 타입마다 어느 테이블을 바라보는지, 어떤 속성이 있는지, 조회할 때 무엇을 계산하는지를 정의한다.
+# 조회 엔진, 액션 엔진, LLM 도구 설명이 모두 이 파일을 읽는다. 링크는 links.yaml을 본다.
+#
+# ---------------------------------------------------------------------------
+# 키
+# ---------------------------------------------------------------------------
+#   description         사람과 LLM이 읽는 설명. LLM 도구 설명은 이 값에서 기계적으로 만든다
+#   source              바라보는 테이블이나 뷰. 앱은 읽기만 한다 (ops는 액션 엔진만 쓴다)
+#   primary_key         식별자 속성 이름
+#   properties          저장된 값. 이름은 camelCase, column은 DB 컬럼
+#     column            DB 컬럼 이름
+#     type              int | float | string | bool | datetime | enum | json
+#     values            enum 값 (UPPER_SNAKE)
+#     ref               값이 이 객체 타입의 primary key다
+#   derived             조회할 때 계산하는 값. 저장하지 않는다 (결정 11, 12)
+#     type, values      properties와 같다
+#     sql               값을 계산하는 SQL 식. 아래 자리표시자를 쓴다
+#   timeseries          객체로 두지 않는 시계열 속성 (결정 1)
+#
+# ---------------------------------------------------------------------------
+# derived.sql의 자리표시자
+# ---------------------------------------------------------------------------
+#   {now}               가상 시계 시각 (결정 7). 엔진이 파라미터로 넘긴다
+#   {이름}              이 객체의 속성이나 파생 속성. 속성은 컬럼으로, 파생 속성은 그 sql로 바뀐다
+#   {객체타입} 별칭      그 객체의 source. 예: FROM {FailureEvent} f
+#                       테이블 이름을 직접 쓰지 않는다. 그래야 원본과 ops를 합친 뷰를 놓치지 않고,
+#                       엔진이 정책(벤더 행 필터)을 같은 자리에 넣을 수 있다
+#   {별칭.파생속성}      별칭 객체의 파생 속성. 예: NOT {f.isResolved}
+#
+# 자리표시자는 중괄호 안이 영문 이름(점 하나까지 허용)인 것뿐이다. '[{"rule": ...}]' 같은 JSON은 그대로 둔다.
+# 별칭 객체의 저장 속성은 SQL 컬럼 이름 그대로 쓴다 (f.machine_id).
+# 시간 경계는 결정 19를 따른다. 기준 시각 이전은 datetime <= now,
+# 최근 N일은 now - N일 < datetime <= now.
+
+Machine:
+  description: "설비. 100대이고 모델은 model1~4다. 모델에 따라 납품한 벤더가 정해진다."
+  source: core.machine
+  primary_key: machineId
+  properties:
+    machineId: { column: machine_id, type: int, description: "설비 번호 (1~100)" }
+    model: { column: model, type: string, description: "설비 모델 (model1~model4)" }
+    age: { column: age, type: int, description: "사용 연수 (년)" }
+    vendorId: { column: vendor_id, type: int, ref: Vendor, description: "납품한 벤더. 모델로 정해진다 (결정 5)" }
+    lastRestartAt: { column: last_restart_at, type: datetime, description: "재가동 액션으로 마지막에 재가동한 시각. 재가동한 적이 없으면 null" }
+    lastRestartBy: { column: last_restart_by, type: string, ref: User, description: "마지막에 재가동한 사용자. 재가동한 적이 없으면 null" }
+  derived:
+    hasOpenFailure:
+      type: bool
+      description: "미해결 고장(resolvedBy로 이어진 교체 기록이 없는 고장)이 하나라도 있다"
+      sql: >-
+        EXISTS (SELECT 1 FROM {FailureEvent} f
+                WHERE f.machine_id = {machineId} AND NOT {f.isResolved})
+    hasOpenWorkOrder:
+      type: bool
+      description: "status가 OPEN인 작업지시가 하나라도 있다"
+      sql: >-
+        EXISTS (SELECT 1 FROM {WorkOrder} w
+                WHERE w.machine_id = {machineId} AND w.status = 'OPEN')
+    hasUncoveredFailure:
+      type: bool
+      description: "미해결 고장 중 OPEN 작업지시가 걸리지 않은(addressedBy로 이어진 OPEN 작업지시가 없는) 고장이 있다"
+      sql: >-
+        EXISTS (SELECT 1 FROM {FailureEvent} f
+                WHERE f.machine_id = {machineId} AND NOT {f.isResolved}
+                  AND NOT EXISTS (SELECT 1 FROM {WorkOrder} w
+                                  WHERE w.failure_id = f.failure_id AND w.status = 'OPEN'))
+    status:
+      type: enum
+      values: [DOWN, MAINTENANCE, READY, RUNNING]
+      description: >-
+        설비 상태. 위에서부터 먼저 맞는 것이다.
+        DOWN: hasUncoveredFailure가 참.
+        MAINTENANCE: hasOpenWorkOrder가 참.
+        READY: 마지막 재가동(lastRestartAt) 이후 DONE이 된 작업지시가 있다. 재가동한 적이 없으면 DONE 작업지시가 하나라도 있다.
+        RUNNING: 그 외.
+        재가동 액션은 READY일 때만 허용한다.
+      sql: >-
+        CASE
+          WHEN {hasUncoveredFailure} THEN 'DOWN'
+          WHEN {hasOpenWorkOrder} THEN 'MAINTENANCE'
+          WHEN EXISTS (SELECT 1 FROM {WorkOrder} w
+                       WHERE w.machine_id = {machineId} AND w.status = 'DONE'
+                         AND ({lastRestartAt} IS NULL OR w.completed_at > {lastRestartAt}))
+            THEN 'READY'
+          ELSE 'RUNNING'
+        END
+    errorCount7d:
+      type: int
+      description: "최근 7일(now - 7일 < datetime <= now) 동안의 에러 건수"
+      sql: >-
+        (SELECT count(*) FROM {ErrorEvent} e
+         WHERE e.machine_id = {machineId}
+           AND e.datetime > {now} - interval '7 days' AND e.datetime <= {now})
+    lastReplacedAt:
+      type: json
+      description: "부품별 마지막 교체 시각. 원본과 액션 교체 기록을 모두 본다. 예: {\"comp1\": \"2015-12-27T06:00:00\", ...}. 교체한 적이 없는 부품은 null"
+      sql: >-
+        (SELECT jsonb_object_agg(c.comp,
+                  (SELECT max(m.datetime) FROM {Maintenance} m
+                   WHERE m.machine_id = {machineId} AND m.comp = c.comp AND m.datetime <= {now}))
+         FROM {Component} c)
+    riskReasons:
+      type: json
+      description: >-
+        riskLevel의 판정 근거 목록. 항목마다 rule이 있다.
+        RECENT_ERROR_NOT_REPLACED: 최근 24시간 안의 에러가 가리키는(indicates) 부품을 그 에러 이후 아직 교체하지 않았다 (comp, errorEventId, errorType, errorAt).
+        REPLACED_OVER_90_DAYS: 그 부품의 마지막 교체 후 90일이 넘었다 (comp, days).
+        근거가 없으면 빈 목록이다.
+      sql: >-
+        coalesce((
+          SELECT jsonb_agg(r.reason ORDER BY r.ord, r.comp, r.at)
+          FROM (
+            SELECT 1 AS ord, x.comp, e.datetime AS at,
+                   jsonb_build_object('rule', 'RECENT_ERROR_NOT_REPLACED', 'comp', x.comp,
+                                      'errorEventId', e.error_event_id, 'errorType', e.error_type,
+                                      'errorAt', e.datetime) AS reason
+            FROM {ErrorEvent} e
+            JOIN ref.error_component_map x ON x.error_type = e.error_type
+            WHERE e.machine_id = {machineId}
+              AND e.datetime > {now} - interval '24 hours' AND e.datetime <= {now}
+              AND NOT EXISTS (SELECT 1 FROM {Maintenance} m
+                              WHERE m.machine_id = e.machine_id AND m.comp = x.comp
+                                AND m.datetime > e.datetime AND m.datetime <= {now})
+            UNION ALL
+            SELECT 2, l.comp, l.last_at,
+                   jsonb_build_object('rule', 'REPLACED_OVER_90_DAYS', 'comp', l.comp,
+                                      'days', extract(day FROM {now} - l.last_at)::int)
+            FROM (SELECT m.comp, max(m.datetime) AS last_at FROM {Maintenance} m
+                  WHERE m.machine_id = {machineId} AND m.datetime <= {now}
+                  GROUP BY m.comp) l
+            WHERE {now} - l.last_at > interval '90 days'
+          ) r
+        ), '[]'::jsonb)
+    riskLevel:
+      type: enum
+      values: [HIGH, MEDIUM, LOW]
+      description: >-
+        고장 위험도. 위에서부터 먼저 맞는 것이다 (결정 9).
+        HIGH: riskReasons에 RECENT_ERROR_NOT_REPLACED가 있다.
+        MEDIUM: riskReasons에 REPLACED_OVER_90_DAYS가 있다.
+        LOW: 그 외.
+        고장 여부는 status가 보여 주므로 넣지 않는다.
+      sql: >-
+        CASE
+          WHEN {riskReasons} @> '[{"rule": "RECENT_ERROR_NOT_REPLACED"}]' THEN 'HIGH'
+          WHEN {riskReasons} @> '[{"rule": "REPLACED_OVER_90_DAYS"}]' THEN 'MEDIUM'
+          ELSE 'LOW'
+        END
+  timeseries:
+    sensorReadings:
+      description: "1시간 단위 센서 측정값. 행이 약 87만 개라 객체로 두지 않는다 (결정 1)"
+      source: raw.telemetry
+      key: { machineId: machine_id }
+      time: { column: datetime, type: datetime }
+      fields:
+        volt: { column: volt, type: float, description: "전압" }
+        rotate: { column: rotate, type: float, description: "회전 속도" }
+        pressure: { column: pressure, type: float, description: "압력" }
+        vibration: { column: vibration, type: float, description: "진동" }
+
+ErrorEvent:
+  description: "설비가 남긴 에러. 고장이 아닌 경고성 이벤트이고, 설비는 계속 돈다. 3,919건."
+  source: raw.errors
+  primary_key: errorEventId
+  properties:
+    errorEventId: { column: error_event_id, type: int, description: "에러 번호. 적재할 때 붙였다 (결정 3). 시간 순서가 아니다" }
+    datetime: { column: datetime, type: datetime, description: "에러 시각" }
+    machineId: { column: machine_id, type: int, ref: Machine, description: "에러가 난 설비" }
+    errorType: { column: error_type, type: string, description: "에러 종류 (error1~error5). 원본 컬럼은 errorID" }
+
+FailureEvent:
+  description: "부품이 고장 나서 교체한 사건. 761건. 고장 기록과 같은 시각의 교체 기록은 같은 사건이다 (결정 4)."
+  source: raw.failures
+  primary_key: failureId
+  properties:
+    failureId: { column: failure_id, type: int, description: "고장 번호. 적재할 때 붙였다 (결정 3). 설비 안에서는 시간 순서다" }
+    datetime: { column: datetime, type: datetime, description: "고장 시각" }
+    machineId: { column: machine_id, type: int, ref: Machine, description: "고장 난 설비" }
+    comp: { column: comp, type: string, ref: Component, description: "고장 난 부품 (comp1~comp4). 원본 컬럼은 failure" }
+  derived:
+    isResolved:
+      type: bool
+      description: "resolvedBy로 이어진 교체 기록이 있다. 같은 설비, 같은 부품을 고장 시각과 같거나 늦게 교체한 기록이 있으면 해결이다 (결정 11)"
+      sql: >-
+        EXISTS (SELECT 1 FROM {Maintenance} m
+                WHERE m.machine_id = {machineId} AND m.comp = {comp}
+                  AND m.datetime >= {datetime})
+
+Maintenance:
+  description: "부품 교체 기록. 원본 기록과 교체 완료 액션이 만든 기록을 합친 것이다 (결정 6). 데모용으로 숨긴 원본 3건은 빠진다 (결정 14)."
+  source: core.maintenance
+  primary_key: maintId
+  properties:
+    maintId: { column: maint_id, type: int, description: "교체 기록 번호. 원본은 1~3286, 액션 기록은 3287부터" }
+    datetime: { column: datetime, type: datetime, description: "교체 시각" }
+    machineId: { column: machine_id, type: int, ref: Machine, description: "교체한 설비" }
+    comp: { column: comp, type: string, ref: Component, description: "교체한 부품 (comp1~comp4)" }
+    source: { column: source, type: enum, values: [RAW, ACTION], description: "RAW: 원본 기록, ACTION: 교체 완료 액션이 만든 기록" }
+    workOrderId: { column: work_order_id, type: int, ref: WorkOrder, description: "이 교체를 끝낸 작업지시. 액션 기록에만 있다" }
+  derived:
+    reason:
+      type: enum
+      values: [CORRECTIVE, PREVENTIVE]
+      description: "CORRECTIVE: 이 기록이 어떤 고장의 resolvedBy다. PREVENTIVE: 그 외 (고장 없이 미리 교체)"
+      sql: >-
+        CASE WHEN EXISTS (
+          SELECT 1 FROM {FailureEvent} f
+          WHERE f.machine_id = {machineId} AND f.comp = {comp} AND f.datetime <= {datetime}
+            AND NOT EXISTS (SELECT 1 FROM {Maintenance} p
+                            WHERE p.machine_id = f.machine_id AND p.comp = f.comp
+                              AND p.datetime >= f.datetime
+                              AND (p.datetime, p.maint_id) < ({datetime}, {maintId})))
+        THEN 'CORRECTIVE' ELSE 'PREVENTIVE' END
+
+Component:
+  description: "부품 종류. comp1~comp4 4개다 (결정 2). 원본에 이름이 없어 name도 comp 값과 같다."
+  source: raw.components
+  primary_key: comp
+  properties:
+    comp: { column: comp, type: string, description: "부품 코드 (comp1~comp4)" }
+    name: { column: name, type: string, description: "표시용 이름" }
+
+Vendor:
+  description: "설비를 납품한 벤더. 2곳이다. 모델 하나는 벤더 하나에만 속한다 (결정 5)."
+  source: raw.vendors
+  primary_key: vendorId
+  properties:
+    vendorId: { column: vendor_id, type: int, description: "벤더 번호" }
+    name: { column: name, type: string, description: "벤더 이름 (Vendor A, Vendor B)" }
+  derived:
+    suppliedModels:
+      type: json
+      description: "납품한 모델 목록. Vendor A는 model1, model2, Vendor B는 model3, model4"
+      sql: >-
+        (SELECT jsonb_agg(vm.model ORDER BY vm.model)
+         FROM raw.vendor_models vm WHERE vm.vendor_id = {vendorId})
+
+User:
+  description: "API를 쓰는 사람. 역할에 따라 실행할 수 있는 액션과 볼 수 있는 데이터가 다르다."
+  source: raw.users
+  primary_key: userId
+  properties:
+    userId: { column: user_id, type: string, description: "사용자 ID (fw1, mech1, mgr1, venA 등). 사용자 ID만 문자열이다 (결정 17)" }
+    name: { column: name, type: string, description: "표시용 이름. 권한 규칙에서는 쓰지 않는다" }
+    role:
+      column: role
+      type: enum
+      values: [FIELD_WORKER, MECHANIC, MANAGER, VENDOR]
+      description: "FIELD_WORKER: 현장 작업자, MECHANIC: 정비사, MANAGER: 관리자, VENDOR: 벤더"
+    vendorId: { column: vendor_id, type: int, ref: Vendor, description: "소속 벤더. VENDOR 역할만 있다" }
+
+WorkOrder:
+  description: "부품을 교체하라는 지시. 작업지시 생성 액션이 만들고, 교체 완료 액션이 DONE으로 바꾼다. 처음에는 0건이다."
+  source: ops.work_orders
+  primary_key: workOrderId
+  properties:
+    workOrderId: { column: work_order_id, type: int, description: "작업지시 번호" }
+    machineId: { column: machine_id, type: int, ref: Machine, description: "대상 설비" }
+    comp: { column: comp, type: string, ref: Component, description: "교체할 부품" }
+    type: { column: type, type: enum, values: [CORRECTIVE, PREVENTIVE], description: "CORRECTIVE: 고장 수리, PREVENTIVE: 예방 정비" }
+    status: { column: status, type: enum, values: [OPEN, DONE, CANCELED], description: "OPEN: 진행 중, DONE: 완료, CANCELED: 취소" }
+    assigneeId: { column: assignee_id, type: string, ref: User, description: "맡은 정비사" }
+    createdBy: { column: created_by, type: string, ref: User, description: "작업지시를 만든 관리자" }
+    createdAt: { column: created_at, type: datetime, description: "만든 시각" }
+    completedAt: { column: completed_at, type: datetime, description: "교체 완료 시각. DONE일 때만 있다" }
+    failureId: { column: failure_id, type: int, ref: FailureEvent, description: "고치려는 고장. CORRECTIVE일 때만 있다 (addresses 링크)" }
+    inspectionRequestId: { column: inspection_request_id, type: int, ref: InspectionRequest, description: "근거가 된 점검 요청 (basedOn 링크)" }
+
+InspectionRequest:
+  description: "설비를 봐 달라는 요청. 설비를 멈추지 않으므로 status 계산에 들어가지 않는다 (결정 10). 처음에는 0건이다."
+  source: ops.inspection_requests
+  primary_key: inspectionRequestId
+  properties:
+    inspectionRequestId: { column: inspection_request_id, type: int, description: "점검 요청 번호" }
+    machineId: { column: machine_id, type: int, ref: Machine, description: "대상 설비" }
+    requestedBy: { column: requested_by, type: string, ref: User, description: "요청한 사용자" }
+    reason: { column: reason, type: string, description: "요청 사유 (500자 이내)" }
+    status: { column: status, type: enum, values: [REQUESTED, CONVERTED, CLOSED], description: "REQUESTED: 요청, CONVERTED: 작업지시로 전환, CLOSED: 종료" }
+    createdAt: { column: created_at, type: datetime, description: "요청 시각" }
+    evidence: { column: evidence, type: json, description: "요청 시점의 errorCount7d, riskLevel. 서버가 채운다" }

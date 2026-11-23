@@ -24,15 +24,23 @@ Machine:
     model: { column: model, type: string }
     lastRestartAt: { column: last_restart_at, type: datetime }
   derived:
-    status:
-      type: enum
-      values: [DOWN, MAINTENANCE, READY, RUNNING]
+    hasOpenFailure:
+      type: bool
+      description: "미해결 고장이 하나라도 있다"
+      sql: >-
+        EXISTS (SELECT 1 FROM {FailureEvent} f
+                WHERE f.machine_id = {machineId} AND NOT {f.isResolved})
     errorCount7d:
       type: int
-      via: hasErrors
-      window: 7d
-      agg: count
+      description: "최근 7일 동안의 에러 건수"
+      sql: >-
+        (SELECT count(*) FROM {ErrorEvent} e
+         WHERE e.machine_id = {machineId}
+           AND e.datetime > {now} - interval '7 days' AND e.datetime <= {now})
 ```
+
+파생 속성은 SQL 식으로 적는다. `{machineId}`는 이 객체의 속성, `{FailureEvent} f`는 그 객체의 source,
+`{f.isResolved}`는 다른 객체의 파생 속성, `{now}`는 가상 시계 시각이다. 자세한 규칙은 `objects.yaml` 맨 위 주석을 본다.
 
 ```yaml
 # links.yaml

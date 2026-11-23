@@ -1,0 +1,196 @@
+# ontology/links.yaml
+# 객체 사이의 링크를 정의한다. 조회 엔진은 링크 탐색(GET /objects/{type}/{id}/links/{link})과
+# 액션 식(target.hasFailures)에서 이 파일을 읽는다. 객체는 objects.yaml을 본다.
+#
+# ---------------------------------------------------------------------------
+# 키
+# ---------------------------------------------------------------------------
+#   description   사람과 LLM이 읽는 설명
+#   from, to      객체 타입
+#   cardinality   from 하나에 to가 몇 개인지
+#                   one_to_many            1:N   (목록)
+#                   many_to_one            N:1   (객체 하나)
+#                   many_to_zero_or_one    N:0..1 (객체 하나나 null)
+#                   one_to_zero_or_one     1:0..1 (객체 하나나 null)
+#   join          이어지는 조건 목록. 모두 참이어야 한다
+#                   "a = b"                from.a = to.b (속성 이름)
+#                   "to.x >= from.y"       from, to를 붙여 비교 (=, <, <=, >, >=)
+#   through       가운데 테이블을 거쳐 이어질 때. join 대신 쓴다
+#                   source                 가운데 테이블
+#                   from                   { from 속성: 가운데 테이블 컬럼 }
+#                   to                     { to 속성: 가운데 테이블 컬럼 }
+#   pick          to가 여럿 맞을 때 하나를 고르는 규칙. earliest(to.속성) | latest(to.속성)
+#   inverse       반대 방향 링크 이름. 액션 식과 링크 탐색에서 이 이름으로 부른다
+#                   name, cardinality
+#
+# 목록은 to의 primary key 오름차순으로 돌려준다 (actions.yaml의 약속).
+# 링크 이름은 from 객체의 속성, 파생 속성 이름과 겹치면 안 된다. inverse 이름은 to 객체에서 같다.
+
+# ---------------------------------------------------------------------------
+# 설비에서 기록으로
+
+hasErrors:
+  description: "설비가 남긴 에러"
+  from: Machine
+  to: ErrorEvent
+  cardinality: one_to_many
+  join:
+    - machineId = machineId
+  inverse: { name: occurredOn, cardinality: many_to_one }
+
+hasFailures:
+  description: "설비의 고장"
+  from: Machine
+  to: FailureEvent
+  cardinality: one_to_many
+  join:
+    - machineId = machineId
+  inverse: { name: failedOn, cardinality: many_to_one }
+
+hasMaintenance:
+  description: "설비의 교체 기록 (원본과 액션 기록을 합친 것)"
+  from: Machine
+  to: Maintenance
+  cardinality: one_to_many
+  join:
+    - machineId = machineId
+  inverse: { name: performedOn, cardinality: many_to_one }
+
+# ---------------------------------------------------------------------------
+# 고장과 교체
+
+resolvedBy:
+  description: "고장을 해결한 교체 기록. 같은 설비, 같은 부품이고 고장 시각과 같거나 늦은 교체 기록 중 가장 이른 것이다. 없으면 미해결 고장이다 (결정 4, 11)"
+  from: FailureEvent
+  to: Maintenance
+  cardinality: many_to_zero_or_one
+  join:
+    - machineId = machineId
+    - comp = comp
+    - to.datetime >= from.datetime
+  pick: earliest(to.datetime)
+  inverse: { name: resolves, cardinality: one_to_many }
+
+# ---------------------------------------------------------------------------
+# 부품
+
+indicates:
+  description: "에러가 이상을 가리키는 부품. 대응 에러는 고장 정확히 24시간 전에 찍힌다 (ref.error_component_map, riskLevel HIGH 판정에 쓴다)"
+  from: ErrorEvent
+  to: Component
+  cardinality: many_to_one
+  through:
+    source: ref.error_component_map
+    from: { errorType: error_type }
+    to: { comp: comp }
+
+failedComponent:
+  description: "고장 난 부품"
+  from: FailureEvent
+  to: Component
+  cardinality: many_to_one
+  join:
+    - comp = comp
+
+replacedComponent:
+  description: "교체한 부품"
+  from: Maintenance
+  to: Component
+  cardinality: many_to_one
+  join:
+    - comp = comp
+
+# ---------------------------------------------------------------------------
+# 벤더와 사용자
+
+supplies:
+  description: "벤더가 납품한 설비. 설비 모델이 벤더의 납품 모델에 들어 있다 (결정 5)"
+  from: Vendor
+  to: Machine
+  cardinality: one_to_many
+  join:
+    - vendorId = vendorId
+  inverse: { name: suppliedBy, cardinality: many_to_one }
+
+belongsTo:
+  description: "사용자가 속한 벤더. VENDOR 역할만 있다"
+  from: User
+  to: Vendor
+  cardinality: many_to_zero_or_one
+  join:
+    - vendorId = vendorId
+
+# ---------------------------------------------------------------------------
+# 작업지시
+
+targets:
+  description: "작업지시의 대상 설비"
+  from: WorkOrder
+  to: Machine
+  cardinality: many_to_one
+  join:
+    - machineId = machineId
+  inverse: { name: hasWorkOrders, cardinality: one_to_many }
+
+addresses:
+  description: "작업지시가 고치려는 고장. CORRECTIVE 작업지시만 있다"
+  from: WorkOrder
+  to: FailureEvent
+  cardinality: many_to_zero_or_one
+  join:
+    - failureId = failureId
+  inverse: { name: addressedBy, cardinality: one_to_many }
+
+completedAs:
+  description: "교체 완료 액션이 이 작업지시로 만든 교체 기록. DONE 작업지시만 있다 (결정 6)"
+  from: WorkOrder
+  to: Maintenance
+  cardinality: one_to_zero_or_one
+  join:
+    - workOrderId = workOrderId
+  inverse: { name: completes, cardinality: many_to_zero_or_one }
+
+basedOn:
+  description: "작업지시의 근거가 된 점검 요청"
+  from: WorkOrder
+  to: InspectionRequest
+  cardinality: many_to_zero_or_one
+  join:
+    - inspectionRequestId = inspectionRequestId
+  inverse: { name: convertedTo, cardinality: one_to_many }
+
+assignedTo:
+  description: "작업지시를 맡은 정비사"
+  from: WorkOrder
+  to: User
+  cardinality: many_to_one
+  join:
+    - assigneeId = userId
+
+issuedBy:
+  description: "작업지시를 만든 관리자"
+  from: WorkOrder
+  to: User
+  cardinality: many_to_one
+  join:
+    - createdBy = userId
+
+# ---------------------------------------------------------------------------
+# 점검 요청
+
+concerns:
+  description: "점검 요청의 대상 설비"
+  from: InspectionRequest
+  to: Machine
+  cardinality: many_to_one
+  join:
+    - machineId = machineId
+  inverse: { name: hasInspectionRequests, cardinality: one_to_many }
+
+submittedBy:
+  description: "점검을 요청한 사용자"
+  from: InspectionRequest
+  to: User
+  cardinality: many_to_one
+  join:
+    - requestedBy = userId
