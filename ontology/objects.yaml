@@ -136,11 +136,15 @@ Machine:
       type: enum
       values: [HIGH, MEDIUM, LOW]
       description: >-
-        고장 위험도. 위에서부터 먼저 맞는 것이다 (결정 9).
+        아직 나지 않은 고장이 곧 날 위험도다. 지금 고장 났는지는 status가 보여 주므로 넣지 않는다 (결정 9).
+        위에서부터 먼저 맞는 것이다.
         HIGH: riskReasons에 RECENT_ERROR_NOT_REPLACED가 있다.
         MEDIUM: riskReasons에 REPLACED_OVER_90_DAYS가 있다.
         LOW: 그 외.
-        고장 여부는 status가 보여 주므로 넣지 않는다.
+        HIGH는 고장이 아니라 에러(경고)로 켜진다. 부품 고장을 알리는 에러는 고장 24시간 전에 찍히므로,
+        에러 후 24시간 안에 그 부품을 교체하지 않은 설비가 곧 고장 날 설비다. 24시간이 지나면 HIGH에서 빠진다.
+        이미 고장 난 설비(status가 DOWN)는 status를 먼저 본다. 이런 설비도 riskLevel은 계산되며,
+        고장 난 부품 자체가 REPLACED_OVER_90_DAYS 근거로 나올 수 있다.
       sql: >-
         CASE
           WHEN {riskReasons} @> '[{"rule": "RECENT_ERROR_NOT_REPLACED"}]' THEN 'HIGH'
