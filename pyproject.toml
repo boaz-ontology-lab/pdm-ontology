@@ -5,6 +5,8 @@ description = "Azure 예지 정비 데이터 위에 온톨로지와 데이터 �
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "faker>=40.63.0",
+    "psycopg[binary]>=3.3.9",
     "pyyaml>=6.0",
 ]
 
