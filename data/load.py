@@ -135,6 +135,30 @@ def check(cur: psycopg.Cursor) -> None:
     hidden = "SELECT array_agg(maint_id ORDER BY maint_id) FROM ref.hidden_maintenance"
     assert one(hidden) == [564, 2898, 2899], "숨김 교체 기록은 564, 2898, 2899여야 한다"
 
+    # 감사 로그는 추가만 된다 (테스트 A3). 시험 행은 savepoint와 함께 되돌린다
+    try:
+        with cur.connection.transaction():
+            cur.execute("""INSERT INTO ops.audit_log (action, result, input, at)
+                           VALUES ('check', 'ALLOWED', '{}', now())""")
+            cur.execute("UPDATE ops.audit_log SET action = 'changed'")
+    except psycopg.errors.RaiseException:
+        pass
+    else:
+        raise AssertionError("ops.audit_log UPDATE가 막혀야 한다")
+
+    # 뷰와 액션 테이블. 숨김 3건을 뺀 원본 교체 기록만 보이고, ops는 비어 있다
+    view_and_ops_counts = {
+        "core.maintenance": 3286 - 3,
+        "core.machine": 100,
+        "ops.inspection_requests": 0,
+        "ops.work_orders": 0,
+        "ops.maintenance_log": 0,
+        "ops.machine_state": 0,
+        "ops.audit_log": 0,
+    }
+    for table, n in view_and_ops_counts.items():
+        assert one(f"SELECT count(*) FROM {table}") == n, f"{table} 행 수가 {n}이 아니다"
+
 
 def main() -> None:
     with connect() as conn, conn.cursor() as cur:
