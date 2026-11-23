@@ -26,7 +26,7 @@ pdm-ontology/
 ├── ontology/            온톨로지 스펙 (objects, links, actions)
 ├── app/                 FastAPI 앱 (조회 엔진, 액션 엔진, 정책, 가상 시계)
 ├── infra/               Docker Compose (Postgres, OpenMetadata)
-├── db/                  스키마, 뷰, 권한 SQL (Postgres 첫 실행 때 자동 적용)
+├── db/                  스키마, 뷰, 권한 SQL (data/load.py가 실행)
 ├── data/                적재, 합성 데이터 스크립트 (원본 CSV는 data/raw/, git 제외)
 ├── scripts/             개발용 스크립트 (표기 규칙 검사 등)
 ├── tests/
