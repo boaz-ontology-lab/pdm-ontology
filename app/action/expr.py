@@ -14,6 +14,8 @@ import ast
 import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Protocol
 
@@ -25,6 +27,8 @@ FUNCTION_ARITY = {"any": 1, "none": 1, "count": 1, "first": 1, "coalesce": None}
 PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 
 _COMPARE_OPS = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)
+# 객체가 아닌 값. resolver에는 온톨로지 객체만 넘긴다. bool은 int에 포함된다
+_PLAIN = (str, int, float, Decimal, date, list, tuple, set, frozenset)
 
 
 class ExprError(Exception):
@@ -236,6 +240,9 @@ class _Evaluator:
             return None
         if isinstance(base, Mapping):
             return base.get(attr)
+        if isinstance(base, _PLAIN):
+            hint = f". {attr}(...)처럼 함수로 부르세요" if attr in FUNCTION_ARITY else ""
+            raise ExprError(f"{type(base).__name__} 값에는 속성 '{attr}'이 없습니다{hint}")
         return self.resolver.attr(base, attr)
 
     def _comprehension(self, node: ast.ListComp | ast.GeneratorExp, env: dict[str, Any]):

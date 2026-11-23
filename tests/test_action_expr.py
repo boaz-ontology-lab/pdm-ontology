@@ -191,11 +191,15 @@ def test_rejected_at_compile(source):
         "target.nope",  # 없는 속성
         "count(target.status)",  # 문자열은 목록이 아니다
         "[f for f in f.hasFailures]",  # 범위 밖 변수
+        "target.status.foo",  # 문자열 값의 속성
+        "input.machineId.foo",  # 숫자 값의 속성
+        "now.year",  # 날짜 값의 속성
+        "target.hasFailures.count",  # 목록 값의 속성
     ],
 )
 def test_rejected_at_evaluation(source):
     with pytest.raises(ExprError) as e:
-        run(source)
+        run(source, machineId=17)
     assert source in str(e.value)
 
 
