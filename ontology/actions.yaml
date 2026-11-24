@@ -65,7 +65,8 @@
 #   null, true, false     값
 #   == != < <= > >= in, not in, and, or, not, a if 조건 else b
 #   [x for x in 목록 if 조건], (x for x in 목록 if 조건)
-#   any(목록), none(목록), count(목록), first(목록), coalesce(a, b, ...)
+#   any(목록), none(목록), count(목록), first(목록), max(목록), coalesce(a, b, ...)
+#                         max는 null을 건너뛰고, 남는 값이 없으면 null이다
 #
 # 목록은 primary key 오름차순이다. 고장은 설비 안에서 번호 순서가 시간 순서다 (docs/synthetic-data.md).
 # 객체를 응답(detail, remaining)에 넣으면 저장 속성(properties)만 담는다.
@@ -288,6 +289,8 @@ restartMachine:
     # 처음 재가동하면 ops.machine_state에 행이 생기고, 이후에는 값만 바뀐다 (결정 12)
     - set: { object: "target", field: lastRestartAt, value: "now" }
     - set: { object: "target", field: lastRestartBy, value: "actor.userId" }
+    # status는 이 번호보다 큰 DONE 작업지시가 생기면 다시 READY가 된다 (결정 21)
+    - set: { object: "target", field: lastRestartWorkOrderId, value: "max(w.workOrderId for w in target.hasWorkOrders)" }
   observe:
     - objects: "target"
       fields: [status]

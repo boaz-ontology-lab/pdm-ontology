@@ -293,6 +293,7 @@ Content-Type: application/json
   "changes": [
     {"type": "Machine", "id": 17, "field": "lastRestartAt", "before": null, "after": "2016-01-01T06:00:00"},
     {"type": "Machine", "id": 17, "field": "lastRestartBy", "before": null, "after": "mgr1"},
+    {"type": "Machine", "id": 17, "field": "lastRestartWorkOrderId", "before": null, "after": 1},
     {"type": "Machine", "id": 17, "field": "status", "before": "READY", "after": "RUNNING"}
   ],
   "remaining": {}

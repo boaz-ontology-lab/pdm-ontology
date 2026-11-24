@@ -18,21 +18,35 @@ YAML의 예약 키(`source`, `properties`, `allowed_roles` 등)는 snake_case로
 # objects.yaml
 Machine:
   source: core.machine          # 바라보는 테이블이나 뷰
+  write:                        # source가 뷰라서 쓸 수 없을 때만. 액션 엔진이 쓰는 곳
+    table: ops.machine_state
+    fields: [lastRestartAt]
   primary_key: machineId
   properties:
     machineId: { column: machine_id, type: int }
     model: { column: model, type: string }
     lastRestartAt: { column: last_restart_at, type: datetime }
   derived:
-    status:
-      type: enum
-      values: [DOWN, MAINTENANCE, READY, RUNNING]
+    hasOpenFailure:
+      type: bool
+      description: "미해결 고장이 하나라도 있다"
+      sql: >-
+        EXISTS (SELECT 1 FROM {FailureEvent} f
+                WHERE f.machine_id = {machineId} AND NOT {f.isResolved})
     errorCount7d:
       type: int
-      via: hasErrors
-      window: 7d
-      agg: count
+      description: "최근 7일 동안의 에러 건수"
+      sql: >-
+        (SELECT count(*) FROM {ErrorEvent} e
+         WHERE e.machine_id = {machineId}
+           AND e.datetime > {now} - interval '7 days' AND e.datetime <= {now})
 ```
+
+파생 속성은 SQL 식으로 적는다. `{machineId}`는 이 객체의 속성, `{FailureEvent} f`는 그 객체의 source,
+`{f.isResolved}`는 다른 객체의 파생 속성, `{now}`는 가상 시계 시각이다. 자세한 규칙은 `objects.yaml` 맨 위 주석을 본다.
+
+`source`는 읽는 곳이다. Machine, Maintenance처럼 source가 원본과 ops를 합친 뷰이면 액션이 쓸 수 없으므로
+`write`에 쓰는 ops 테이블과 속성을 적는다. source가 ops 테이블이면 거기에 그대로 쓰고, 그 밖의 객체는 쓸 수 없다.
 
 ```yaml
 # links.yaml

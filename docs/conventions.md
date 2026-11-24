@@ -44,6 +44,7 @@
 | `WorkOrder.status` | `OPEN` (진행 중), `DONE` (완료), `CANCELED` (취소) |
 | `InspectionRequest.status` | `REQUESTED` (요청), `CONVERTED` (작업지시로 전환), `CLOSED` (종료) |
 | `Maintenance.source` | `RAW` (원본), `ACTION` (액션) |
+| `Machine.riskReasons[].rule` (파생) | `RECENT_ERROR_NOT_REPLACED` (최근 에러 부품 미교체), `REPLACED_OVER_90_DAYS` (교체 후 90일 초과) |
 | `Maintenance.reason` (파생) | `CORRECTIVE` (고장), `PREVENTIVE` (예방) |
 | `User.role` | `FIELD_WORKER` (현장 작업자), `MECHANIC` (정비사), `MANAGER` (관리자), `VENDOR` (벤더) |
 

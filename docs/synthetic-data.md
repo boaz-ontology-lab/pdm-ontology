@@ -110,7 +110,7 @@ C의 EDA 기준: 대응 에러는 고장 정확히 24시간 전에 찍혔다.
 
 | 테이블 | 컬럼 | 채우는 액션 |
 |---|---|---|
-| `ops.machine_state` | machine_id, last_restart_at, last_restart_by | 재가동. 처음 재가동할 때 행이 생기고, 이후엔 값만 바뀐다 (결정 12) |
+| `ops.machine_state` | machine_id, last_restart_at, last_restart_by, last_restart_work_order_id | 재가동. 처음 재가동할 때 행이 생기고, 이후엔 값만 바뀐다 (결정 12, 21) |
 | `ops.work_orders` | work_order_id, machine_id, comp, type, status, assignee_id, created_by, created_at, completed_at, failure_id, inspection_request_id | 작업지시 생성, 교체 완료 |
 | `ops.inspection_requests` | inspection_request_id, machine_id, requested_by, reason, status, created_at, evidence | 점검 요청 |
 | `ops.maintenance_log` | maint_id(3287부터), datetime, machine_id, comp, work_order_id | 교체 완료 |
