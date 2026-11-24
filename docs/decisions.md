@@ -18,7 +18,7 @@
 | 9 | riskLevel은 `HIGH` / `MEDIUM` / `LOW` 3단계다 (아래 규칙) | 단일 조건은 100대 중 50대를 위험으로 잡았다 |
 | 10 | 역할과 작업지시 값은 C 문서를 따른다. 점검 요청은 WorkOrder가 아니라 InspectionRequest로 따로 둔다 | 점검 요청은 설비를 멈추지 않으니 MAINTENANCE 계산에서 빠져야 한다 |
 | 11 | 고장 해결 여부는 저장하지 않는다. `isResolved`는 resolvedBy 링크로 계산하고, 교체 완료 액션은 교체 기록만 만든다 | 같은 정보를 두 곳에 두면 어긋난다. 원본 failures 테이블에 쓰지 않아도 된다 |
-| 12 | `Machine.status`는 저장하지 않고 파생 속성으로 조회할 때 계산한다. 저장하는 값은 `lastRestartAt`, `lastRestartBy`뿐이다 | 데모 초기화나 재적재 때 저장 값이 어긋나지 않는다 |
+| 12 | `Machine.status`는 저장하지 않고 파생 속성으로 조회할 때 계산한다. 저장하는 값은 `lastRestartAt`, `lastRestartBy`뿐이다 (저장 값 목록은 21번으로 대체) | 데모 초기화나 재적재 때 저장 값이 어긋나지 않는다 |
 | 13 | 키 이름을 통일한다. 자세한 규칙은 [conventions.md](conventions.md) | 같은 키를 machineID, machineId, machine_id로 섞어 썼다 |
 | 14 | 데모 설비는 C 문서를 따른다. 데모 2번은 설비 17의 2015-11-27 comp2 고장, 동시 고장 테스트는 설비 88의 2015-11-30 comp2, comp4 고장이다. 짝인 원본 교체 기록을 숨겨 미해결로 만든다 | C의 테스트 케이스와 예시가 이미 설비 17 기준이다. 두 고장 모두 숨긴 기록 뒤로 같은 부품 교체가 없어 새 resolvedBy 규칙에서도 미해결로 남는다 |
 | 15 | 거부와 오류는 HTTP 코드로 구분한다. 권한 403, 사전조건 409, 입력 422, 대상 없음 404, 사용자 확인 401. 본문 모양은 모두 같다. 자세한 내용은 [api.md](api.md) | 발표에서 단계별 거부가 바로 보이고, 테스트와 로그에서 구분하기 쉽다. LLM 도구는 상태 코드와 상관없이 본문을 넘기면 된다 |
@@ -26,6 +26,8 @@
 | 17 | 객체와 감사 로그 ID는 정수, 사용자 ID만 문자열(`fw1`, `mech1`)이다 | 적재 데이터의 ID가 정수라 조인과 타입이 단순해진다 |
 | 18 | `comp`를 enum 대신 `ref: Component`로 막는다. | enum 값 `comp1`이 소문자라 표기 검사에 걸리고 부품 목록을 두 곳에 두게 된다. |
 | 19 | 기준 시각과 같은 시각의 기록은 포함한다. 시간 조건은 `datetime <= now`로 쓰고, "최근 N일"은 `now - N일 < datetime <= now`다 | 원본 telemetry와 교체 기록의 마지막 시각이 기준 시각과 같은 2016-01-01 06:00이다. `< now`로 쓰면 이 행이 빠진다 |
+| 20 | 파생 속성은 `ontology/objects.yaml`에 사람이 읽는 `description`과 엔진이 쓰는 `sql`로 적는다. `sql`은 다른 객체를 테이블 이름 대신 `{FailureEvent} f`처럼 객체 타입으로 부른다 | 엔진이 단순하고 필터, 정렬, explain, 정책이 모두 DB 안에서 처리된다. 객체 타입으로 부르면 원본과 ops를 합친 뷰를 놓치지 않고, 엔진이 그 자리에 벤더 행 필터를 넣을 수 있다 |
+| 21 | status의 "마지막 재가동 이후 DONE이 된 작업지시"는 시각이 아니라 작업지시 번호로 가린다. 재가동할 때 그 설비의 가장 큰 작업지시 번호를 `lastRestartWorkOrderId`로 저장하고, 그보다 번호가 큰 DONE 작업지시가 있으면 `READY`다. 저장하는 값은 `lastRestartAt`, `lastRestartBy`, `lastRestartWorkOrderId`다 | 기준 시각이 고정(결정 7)이라 교체 완료와 재가동 시각이 같아 `>`로도 `>=`로도 순서를 가릴 수 없다. `>`면 두 번째 교체 뒤 `READY`가 되지 않아 재가동이 막히고, `>=`면 재가동 뒤에도 `READY`가 남는다. 재가동은 OPEN 작업지시가 없을 때만 되므로 재가동 뒤에 끝나는 작업지시는 항상 번호가 더 크다 |
 
 ## 핵심 규칙
 
@@ -49,7 +51,7 @@ ORDER BY f.failure_id, m.datetime;
 |---|---|---|
 | 1 | `DOWN` | `hasUncoveredFailure`: OPEN 작업지시가 걸리지 않은 미해결 고장이 있다 |
 | 2 | `MAINTENANCE` | `hasOpenWorkOrder`: OPEN 작업지시가 있다 |
-| 3 | `READY` | 마지막 재가동(`lastRestartAt`) 이후 DONE이 된 작업지시가 있다 |
+| 3 | `READY` | 마지막 재가동 이후 DONE이 된 작업지시가 있다. 작업지시 번호가 `lastRestartWorkOrderId`보다 크면 재가동 이후다 (결정 21) |
 | 4 | `RUNNING` | 그 외 |
 
 재가동 액션은 `READY`일 때만 허용한다.
@@ -59,8 +61,10 @@ ORDER BY f.failure_id, m.datetime;
 | 값 | 조건 | 기준 시각 대수 |
 |---|---|---|
 | `HIGH` | 최근 24시간 안에 에러가 있고, 그 에러가 가리키는(indicates) 부품을 에러 이후 아직 교체하지 않았다 | 5대 |
-| `MEDIUM` | 어느 부품이든 마지막 교체 후 90일이 넘었다 | 44대 |
-| `LOW` | 그 외 | 51대 |
+| `MEDIUM` | 어느 부품이든 마지막 교체 후 90일이 넘었다 | 45대 |
+| `LOW` | 그 외 | 50대 |
+
+대수는 데모용으로 숨긴 교체 기록(결정 14)을 뺀 `core.maintenance` 기준이다. 숨기기 전에는 MEDIUM 44대, LOW 51대였다. 설비 17은 comp2 교체 기록이 숨겨져 마지막 comp2 교체가 110일 전이 되면서 MEDIUM이 된다.
 
 고장 여부는 status가 보여 주므로 riskLevel에 넣지 않는다. 판정 근거는 `riskReasons`로 함께 돌려준다.
 
