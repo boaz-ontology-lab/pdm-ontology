@@ -1,4 +1,4 @@
-.PHONY: setup lint format test conventions check up up-db down
+.PHONY: setup lint format test conventions check up up-db down om-ingest
 
 setup:        ## 의존성 설치
 	uv sync
@@ -27,3 +27,6 @@ up-db:        ## Postgres만 실행 (OpenMetadata 없이, 조회·액션 개발�
 
 down:         ## 전체 중지
 	docker compose -f infra/docker-compose.yml down
+
+om-ingest:    ## OpenMetadata에 pdm DB 수집 (make up과 data/load.py 다음에)
+	uv run python scripts/om_ingest.py
