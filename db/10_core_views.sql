@@ -9,9 +9,10 @@ UNION ALL
 SELECT maint_id, datetime, machine_id, comp, 'ACTION', work_order_id
 FROM ops.maintenance_log;
 
--- 설비 + 벤더 + 재가동 기록 (결정 5, 12)
+-- 설비 + 벤더 + 재가동 기록 (결정 5, 12, 21)
 CREATE VIEW core.machine AS
-SELECT m.machine_id, m.model, m.age, vm.vendor_id, s.last_restart_at, s.last_restart_by
+SELECT m.machine_id, m.model, m.age, vm.vendor_id,
+       s.last_restart_at, s.last_restart_by, s.last_restart_work_order_id
 FROM raw.machines m
 JOIN raw.vendor_models vm USING (model)
 LEFT JOIN ops.machine_state s USING (machine_id);

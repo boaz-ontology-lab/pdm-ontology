@@ -23,7 +23,7 @@ CONTEXT_NAMES = frozenset({"target", "actor", "input", "now"})
 CONSTANTS: dict[str, Any] = {"null": None, "true": True, "false": False}
 CODE_VALUE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 OBJECT_TYPE = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
-FUNCTION_ARITY = {"any": 1, "none": 1, "count": 1, "first": 1, "coalesce": None}
+FUNCTION_ARITY = {"any": 1, "none": 1, "count": 1, "first": 1, "max": 1, "coalesce": None}
 PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 
 _COMPARE_OPS = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)
@@ -276,6 +276,8 @@ class _Evaluator:
                 return not any(items)
             if name == "count":
                 return sum(1 for _ in items)
+            if name == "max":  # null은 건너뛴다. 남는 값이 없으면 null
+                return max((v for v in items if v is not None), default=None)
             return next(iter(items), None)  # first
         if not self.resolver.has_type(name):
             raise ExprError(f"모르는 객체 타입 '{name}'")

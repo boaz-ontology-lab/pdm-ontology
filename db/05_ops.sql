@@ -43,10 +43,13 @@ CREATE TABLE ops.maintenance_log (
 );
 
 -- 재가동 기록. 첫 재가동 때 행이 생긴다. status는 저장하지 않는다 (결정 12)
+-- last_restart_work_order_id: 재가동 때 그 설비의 가장 큰 작업지시 번호 (결정 21).
+-- 재가동은 READY일 때만 되고 READY면 DONE 작업지시가 있으니 항상 값이 있다
 CREATE TABLE ops.machine_state (
-    machine_id      int       PRIMARY KEY REFERENCES raw.machines,
-    last_restart_at timestamp NOT NULL,
-    last_restart_by text      NOT NULL REFERENCES raw.users
+    machine_id                 int       PRIMARY KEY REFERENCES raw.machines,
+    last_restart_at            timestamp NOT NULL,
+    last_restart_by            text      NOT NULL REFERENCES raw.users,
+    last_restart_work_order_id int       NOT NULL REFERENCES ops.work_orders
 );
 
 -- 감사 로그. 호출마다 한 행, 추가만 허용한다 (거부, 오류도 남긴다)

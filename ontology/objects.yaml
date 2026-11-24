@@ -44,6 +44,7 @@ Machine:
     vendorId: { column: vendor_id, type: int, ref: Vendor, description: "납품한 벤더. 모델로 정해진다 (결정 5)" }
     lastRestartAt: { column: last_restart_at, type: datetime, description: "재가동 액션으로 마지막에 재가동한 시각. 재가동한 적이 없으면 null" }
     lastRestartBy: { column: last_restart_by, type: string, ref: User, description: "마지막에 재가동한 사용자. 재가동한 적이 없으면 null" }
+    lastRestartWorkOrderId: { column: last_restart_work_order_id, type: int, ref: WorkOrder, description: "마지막 재가동 때 이 설비의 가장 큰 작업지시 번호. status가 재가동 이후에 끝난 작업지시를 찾을 때 쓴다 (결정 21). 재가동한 적이 없으면 null" }
   derived:
     hasOpenFailure:
       type: bool
@@ -72,16 +73,20 @@ Machine:
         설비 상태. 위에서부터 먼저 맞는 것이다.
         DOWN: hasUncoveredFailure가 참.
         MAINTENANCE: hasOpenWorkOrder가 참.
-        READY: 마지막 재가동(lastRestartAt) 이후 DONE이 된 작업지시가 있다. 재가동한 적이 없으면 DONE 작업지시가 하나라도 있다.
+        READY: 마지막 재가동 이후 DONE이 된 작업지시가 있다. 재가동한 적이 없으면 DONE 작업지시가 하나라도 있다.
         RUNNING: 그 외.
         재가동 액션은 READY일 때만 허용한다.
+        "재가동 이후"는 시각이 아니라 작업지시 번호로 가린다 (결정 21). 기준 시각이 고정이라
+        교체 완료와 재가동 시각이 같기 때문이다. 재가동은 OPEN 작업지시가 없을 때만 되므로,
+        재가동 뒤에 DONE이 되는 작업지시는 항상 lastRestartWorkOrderId보다 번호가 크다.
       sql: >-
         CASE
           WHEN {hasUncoveredFailure} THEN 'DOWN'
           WHEN {hasOpenWorkOrder} THEN 'MAINTENANCE'
           WHEN EXISTS (SELECT 1 FROM {WorkOrder} w
                        WHERE w.machine_id = {machineId} AND w.status = 'DONE'
-                         AND ({lastRestartAt} IS NULL OR w.completed_at > {lastRestartAt}))
+                         AND ({lastRestartWorkOrderId} IS NULL
+                              OR w.work_order_id > {lastRestartWorkOrderId}))
             THEN 'READY'
           ELSE 'RUNNING'
         END

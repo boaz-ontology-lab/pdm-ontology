@@ -115,6 +115,14 @@ def test_links_and_comprehension():
     assert run("Machine(17).hasFailures", target=M49) == [F120, F121]
 
 
+def test_max():
+    assert run("max(w.workOrderId for w in target.hasWorkOrders)") == 2
+    assert run("max(w.workOrderId for w in target.hasWorkOrders if w.status == DONE)") == 2
+    assert run("max(w.workOrderId for w in target.hasWorkOrders)", target=M49) is None  # 빈 목록
+    assert run("max([null, 3, null, 1])") == 3  # null은 건너뛴다
+    assert run("max([null])") is None
+
+
 def test_nested_comprehension():
     source = (
         "[w.workOrderId for w in target.hasWorkOrders"
