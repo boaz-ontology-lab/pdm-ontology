@@ -63,6 +63,8 @@ make check    # 린트, 테스트, 표기 규칙 검사 (CI와 같음)
 | `make up` / `make down` | Postgres, OpenMetadata 실행과 중지 (UI: http://localhost:8585, admin@open-metadata.org / admin) |
 | `make up-db` | Postgres만 실행 (가벼움). make가 없으면 `docker compose -f infra/docker-compose.yml up -d postgres` |
 | `make om-ingest` | OpenMetadata에 pdm DB의 `raw`, `ref`, `ops`, `core` 수집. `make up`과 `data/load.py` 다음에 실행. make가 없으면 `uv run python scripts/om_ingest.py` |
+| `make om-tags-push` | `ontology/policy_tags.yaml`에 적힌 `PdmPolicy` 태그를 OpenMetadata에 붙임. `make om-ingest` 다음에 한 번 |
+| `make om-tags` | OpenMetadata에서 `PdmPolicy` 태그가 붙은 테이블과 컬럼을 읽어 `ontology/policy_tags.yaml`을 덮어씀. 화면에서 태그를 바꾼 뒤 실행 |
 
 ## 문서
 

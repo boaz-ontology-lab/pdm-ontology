@@ -23,12 +23,13 @@ CONTAINER = "openmetadata_ingestion"
 OM_API = os.getenv("OM_API", "http://localhost:8585/api/v1")
 
 
-def call(path: str, token: str | None = None, body: dict | None = None) -> dict:
-    headers = {"Content-Type": "application/json"}
+def call(path: str, token: str | None = None, body=None, method: str | None = None) -> dict:
+    patch = method == "PATCH"
+    headers = {"Content-Type": "application/json-patch+json" if patch else "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(OM_API + path, data=data, headers=headers)
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(OM_API + path, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.load(r)
 

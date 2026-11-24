@@ -1,4 +1,4 @@
-.PHONY: setup lint format test conventions check up up-db down om-ingest
+.PHONY: setup lint format test conventions check up up-db down om-ingest om-tags om-tags-push
 
 setup:        ## 의존성 설치
 	uv sync
@@ -30,3 +30,9 @@ down:         ## 전체 중지
 
 om-ingest:    ## OpenMetadata에 pdm DB 수집 (make up과 data/load.py 다음에)
 	uv run python scripts/om_ingest.py
+
+om-tags:      ## OpenMetadata의 PdmPolicy 태그를 ontology/policy_tags.yaml로 받기
+	uv run python scripts/sync_policy_tags.py
+
+om-tags-push: ## ontology/policy_tags.yaml의 태그를 OpenMetadata에 붙이기 (om-ingest 다음에)
+	uv run python scripts/sync_policy_tags.py --push
