@@ -18,11 +18,21 @@ from test_actions_spec import _actions, _expressions
 
 ROOT = Path(__file__).resolve().parents[1]
 ONTOLOGY = ROOT / "ontology"
+DB = ROOT / "db"
 
 TYPES = {"int", "float", "string", "bool", "datetime", "enum", "json"}
 CARDINALITIES = {"one_to_many", "many_to_one", "many_to_zero_or_one", "one_to_zero_or_one"}
 SINGLE = {"many_to_one", "many_to_zero_or_one", "one_to_zero_or_one"}
-OBJECT_KEYS = {"description", "source", "primary_key", "properties", "derived", "timeseries"}
+OBJECT_KEYS = {
+    "description",
+    "source",
+    "write",
+    "primary_key",
+    "properties",
+    "derived",
+    "timeseries",
+}
+WRITE_KEYS = {"table", "fields"}
 LINK_KEYS = {"description", "from", "to", "cardinality", "join", "through", "pick", "inverse"}
 SOURCE = re.compile(r"^(raw|ref|ops|core)\.[a-z_]+$")
 PLACEHOLDER = re.compile(r"\{([A-Za-z][A-Za-z0-9]*)(?:\.([A-Za-z][A-Za-z0-9]*))?\}")
@@ -30,6 +40,8 @@ ALIAS_DECL = re.compile(r"\{([A-Z][A-Za-z0-9]*)\}\s+([a-z][a-z0-9_]*)")
 JOIN_EQ = re.compile(r"^(\w+) = (\w+)$")
 JOIN_CMP = re.compile(r"^(from|to)\.(\w+) (=|<|<=|>|>=) (from|to)\.(\w+)$")
 PICK = re.compile(r"^(earliest|latest)\(to\.(\w+)\)$")
+CREATE_TABLE = re.compile(r"CREATE TABLE (\w+\.\w+) \((.*?)\n\);", re.S)
+COLUMN = re.compile(r"^\s+([a-z_]+)\s", re.M)
 
 
 def _load(name: str) -> dict[str, Any]:
@@ -60,6 +72,24 @@ def _derived(obj: dict[str, Any]) -> dict[str, Any]:
     return obj.get("derived") or {}
 
 
+def _write_target(obj: dict[str, Any]) -> tuple[str, set[str]] | None:
+    """액션 엔진이 쓰는 테이블과 쓸 수 있는 속성. 쓸 수 없는 객체면 None (objects.yaml "쓰기")."""
+    if write := obj.get("write"):
+        return write["table"], set(write["fields"])
+    if obj["source"].startswith("ops."):
+        return obj["source"], set(_props(obj)) - {obj["primary_key"]}
+    return None
+
+
+def _db_columns() -> dict[str, set[str]]:
+    """db/*.sql의 CREATE TABLE에서 테이블마다 컬럼 이름."""
+    tables: dict[str, set[str]] = {}
+    for path in sorted(DB.glob("*.sql")):
+        for table, body in CREATE_TABLE.findall(path.read_text(encoding="utf-8")):
+            tables[table] = set(COLUMN.findall(body))
+    return tables
+
+
 def _link_names(links: dict[str, Any]) -> dict[str, set[str]]:
     """객체 타입마다 그 객체에서 출발하는 링크 이름 (inverse 포함)."""
     names: dict[str, set[str]] = {}
@@ -82,6 +112,33 @@ def test_object_shape(objects):
             assert obj.get(key), f"{name}: {key}가 없습니다"
         assert SOURCE.match(obj["source"]), f"{name}: source '{obj['source']}'"
         assert obj["primary_key"] in _props(obj), f"{name}: primary_key가 properties에 없습니다"
+
+
+def test_write_shape(objects):
+    tables = _db_columns()
+    for name, obj in objects.items():
+        if "write" in obj:
+            write = obj["write"]
+            assert set(write) == WRITE_KEYS, f"{name}: write는 table과 fields만"
+            assert not obj["source"].startswith("ops."), (
+                f"{name}: source가 ops면 write가 필요 없습니다"
+            )
+            assert write["table"].startswith("ops."), f"{name}: 액션은 ops에만 씁니다 (결정 6)"
+            assert write["fields"], f"{name}: write.fields가 비었습니다"
+            missing = set(write["fields"]) - set(_props(obj))
+            assert not missing, f"{name}: write.fields에 없는 속성 {sorted(missing)}"
+            assert obj["primary_key"] not in write["fields"], (
+                f"{name}: primary key는 엔진이 채웁니다"
+            )
+
+        target = _write_target(obj)
+        if target is None:
+            continue
+        table, fields = target
+        assert table in tables, f"{name}: {table}이 db/*.sql에 없습니다"
+        for prop in fields | {obj["primary_key"]}:
+            column = _props(obj)[prop]["column"]
+            assert column in tables[table], f"{name}.{prop}: {table}에 컬럼 {column}이 없습니다"
 
 
 def test_properties(objects):
@@ -214,6 +271,16 @@ def test_actions_use_defined_names(objects, links, actions):
                 assert node.attr in known, f"{name}: '{node.attr}'이 objects, links에 없습니다"
 
 
+def _effect_object(expr: str, target: str, objects: dict[str, Any]) -> str:
+    """set.object 식이 가리키는 객체 타입. target이거나 객체타입(id)만 허용한다."""
+    node = ast.parse(expr.strip(), mode="eval").body
+    if isinstance(node, ast.Name) and node.id == "target":
+        return target
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in objects:
+        return node.func.id
+    pytest.fail(f"set.object '{expr}'의 객체 타입을 알 수 없습니다")
+
+
 def test_action_targets_and_effects(objects, actions):
     for name, action in _actions(actions).items():
         assert action["target"] in objects, name
@@ -222,10 +289,11 @@ def test_action_targets_and_effects(objects, actions):
                 assert spec["ref"] in objects, f"{name}.input.{field}"
         for effect in action["effect"]:
             if "create" in effect:
-                created = objects[effect["create"]]
-                missing = set(effect["values"]) - set(_props(created))
-                assert not missing, f"{name}: {effect['create']}에 없는 속성 {sorted(missing)}"
+                type_name, fields = effect["create"], set(effect["values"])
             else:
-                field = effect["set"]["field"]
-                stored = {p for obj in objects.values() for p in _props(obj)}
-                assert field in stored, f"{name}: set은 저장 속성만 바꿀 수 있습니다 ({field})"
+                type_name = _effect_object(effect["set"]["object"], action["target"], objects)
+                fields = {effect["set"]["field"]}
+            target = _write_target(objects[type_name])
+            assert target, f"{name}: {type_name}은 쓸 수 없는 객체입니다"
+            extra = fields - target[1]
+            assert not extra, f"{name}: {type_name}에 쓸 수 없는 속성 {sorted(extra)} ({target[0]})"

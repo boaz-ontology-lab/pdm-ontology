@@ -6,7 +6,10 @@
 # 키
 # ---------------------------------------------------------------------------
 #   description         사람과 LLM이 읽는 설명. LLM 도구 설명은 이 값에서 기계적으로 만든다
-#   source              바라보는 테이블이나 뷰. 앱은 읽기만 한다 (ops는 액션 엔진만 쓴다)
+#   source              바라보는 테이블이나 뷰. 조회는 여기서 읽는다
+#   write               액션 엔진이 쓰는 곳. source가 뷰라서 쓸 수 없을 때만 적는다 (아래 "쓰기")
+#     table             쓰는 ops 테이블
+#     fields            그 테이블에 있는 속성. 액션의 create, set은 이 속성만 쓸 수 있다
 #   primary_key         식별자 속성 이름
 #   properties          저장된 값. 이름은 camelCase, column은 DB 컬럼
 #     column            DB 컬럼 이름
@@ -32,10 +35,25 @@
 # 별칭 객체의 저장 속성은 SQL 컬럼 이름 그대로 쓴다 (f.machine_id).
 # 시간 경계는 결정 19를 따른다. 기준 시각 이전은 datetime <= now,
 # 최근 N일은 now - N일 < datetime <= now.
+#
+# ---------------------------------------------------------------------------
+# 쓰기 (액션 엔진)
+# ---------------------------------------------------------------------------
+# 원본(raw)은 읽기 전용이고 액션은 ops에만 쓴다 (결정 6).
+#   어디에 쓰나       write가 있으면 write.table, 없고 source가 ops이면 source. 그 밖의 객체는 쓸 수 없다
+#   무엇을 쓰나       write.fields. write가 없으면 primary key를 뺀 properties 전부
+#   컬럼 이름         properties의 column을 그대로 쓴다. 그래서 write.table과 source의 컬럼 이름이 같아야 한다
+#   primary key      엔진이 채운다. create는 DB가 번호를 만들고, set은 대상 객체의 값으로 행을 찾는다
+#   create           INSERT 한 행. 응답의 created는 source에서 다시 읽는다 (Maintenance의 source: ACTION처럼 뷰가 붙이는 값 포함)
+#   set              primary key로 행을 찾아 바꾼다. 행이 없으면 만든다 (첫 재가동 때 ops.machine_state)
+#                    같은 객체에 대한 set은 한 문장으로 묶는다. 하나씩 넣으면 나머지 NOT NULL 컬럼이 비어 실패한다
 
 Machine:
   description: "설비. 100대이고 모델은 model1~4다. 모델에 따라 납품한 벤더가 정해진다."
   source: core.machine
+  write:
+    table: ops.machine_state
+    fields: [lastRestartAt, lastRestartBy, lastRestartWorkOrderId]
   primary_key: machineId
   properties:
     machineId: { column: machine_id, type: int, description: "설비 번호 (1~100)" }
@@ -199,6 +217,10 @@ FailureEvent:
 Maintenance:
   description: "부품 교체 기록. 원본 기록과 교체 완료 액션이 만든 기록을 합친 것이다 (결정 6). 데모용으로 숨긴 원본 3건은 빠진다 (결정 14)."
   source: core.maintenance
+  write:
+    # source는 뷰가 붙이는 값이라 쓰지 않는다. ops.maintenance_log의 행은 뷰에서 ACTION으로 보인다
+    table: ops.maintenance_log
+    fields: [datetime, machineId, comp, workOrderId]
   primary_key: maintId
   properties:
     maintId: { column: maint_id, type: int, description: "교체 기록 번호. 원본은 1~3286, 액션 기록은 3287부터" }

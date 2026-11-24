@@ -230,14 +230,14 @@ completeReplacement:
       message: "작업지시가 {target.status} 상태라 교체 완료할 수 없습니다"
       detail: { workOrderStatus: "target.status" }
   effect:
-    # 원본 교체 기록은 건드리지 않는다. ops.maintenance_log에 source가 ACTION인 행으로 추가된다 (결정 6)
-    # 고장의 isResolved는 resolvedBy 링크가 이 기록을 찾아서 바뀐다. 고장에는 쓰지 않는다 (결정 11)
+    # 원본 교체 기록은 건드리지 않는다. ops.maintenance_log에 한 행이 추가되고
+    # source(ACTION)는 core.maintenance 뷰가 붙인다. (결정 6)
+    # 고장의 isResolved는 resolvedBy 링크가 이 기록을 찾아서 바뀐다. 고장에는 쓰지 않는다. (결정 11)
     - create: Maintenance
       values:
         datetime: "now"
         machineId: "target.machineId"
         comp: "target.comp"
-        source: "ACTION"
         workOrderId: "target.workOrderId"
     - set: { object: "target", field: status, value: "DONE" }
     - set: { object: "target", field: completedAt, value: "now" }
