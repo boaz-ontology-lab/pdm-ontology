@@ -262,8 +262,25 @@ def test_s1_to_s4_demo_2(engine, store):
     assert [(c["field"], c["before"], c["after"]) for c in res.body["changes"]] == [
         ("lastRestartAt", None, "2016-01-01T06:00:00"),
         ("lastRestartBy", None, "mgr1"),
+        ("lastRestartWorkOrderId", None, wo),
         ("status", "READY", "RUNNING"),
     ]
+    assert status_of(store, 17) == "RUNNING"
+
+
+def test_second_cycle_after_restart(engine, store):
+    """결정 21: 기준 시각이 멈춰 있어도, 재가동 뒤 같은 시각에 끝난 교체로 다시 READY가 된다."""
+    wo = create_wo(engine, 17, "comp2")
+    run(engine, "completeReplacement", "mech1", workOrderId=wo)
+    assert run(engine, "restartMachine", "mgr1", machineId=17).status == 200
+    assert store.get("Machine", 17).props["lastRestartWorkOrderId"] == wo
+
+    res = run(engine, "createWorkOrder", "mgr1", machineId=17, comp="comp1",
+              type="PREVENTIVE", assigneeId="mech1")  # fmt: skip
+    assert status_of(store, 17) == "MAINTENANCE"
+    run(engine, "completeReplacement", "mech1", workOrderId=res.body["created"][0]["id"])
+    assert status_of(store, 17) == "READY"  # 시각(completedAt > lastRestartAt)으로 가리면 RUNNING
+    assert run(engine, "restartMachine", "mgr1", machineId=17).status == 200
     assert status_of(store, 17) == "RUNNING"
 
 

@@ -134,8 +134,9 @@ class MemoryStore:
                 raise ConstraintViolation("work_orders: DONE일 때만 completed_at이 있다")
             if (p["type"] == "CORRECTIVE") != (p["failureId"] is not None):
                 raise ConstraintViolation("work_orders: CORRECTIVE일 때만 failure_id가 있다")
-        if obj.type == "Machine" and (p["lastRestartAt"] is None) != (p["lastRestartBy"] is None):
-            raise ConstraintViolation("machine_state: 재가동 시각과 승인자는 함께 있다")
+        restart = ("lastRestartAt", "lastRestartBy", "lastRestartWorkOrderId")
+        if obj.type == "Machine" and len({p[k] is None for k in restart}) > 1:
+            raise ConstraintViolation("machine_state: 재가동 값 세 개는 함께 있다")
         if obj.type == "WorkOrder" and obj.props["status"] == "OPEN":
             if any(
                 w is not obj
@@ -198,9 +199,10 @@ def _status(s: MemoryStore, m: Obj) -> str:
         return "DOWN"
     if _open_work_orders(s, m):
         return "MAINTENANCE"
-    restarted = m.props["lastRestartAt"]
+    # 재가동 이후에 끝난 작업지시는 시각이 아니라 번호로 가린다 (결정 21)
+    last = m.props["lastRestartWorkOrderId"]
     done_after_restart = any(
-        w.props["status"] == "DONE" and (restarted is None or w.props["completedAt"] > restarted)
+        w.props["status"] == "DONE" and (last is None or w.id > last)
         for w in s.attr(m, "hasWorkOrders")
     )
     return "READY" if done_after_restart else "RUNNING"
@@ -268,6 +270,7 @@ def demo_store() -> MemoryStore:
             vendorId=1 if model in ("model1", "model2") else 2,  # 결정 5
             lastRestartAt=None,
             lastRestartBy=None,
+            lastRestartWorkOrderId=None,
             errorCount7d=3 if risk == "HIGH" else 0,
             riskLevel=risk,
         )
