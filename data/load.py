@@ -7,13 +7,17 @@
 규칙과 값의 근거는 docs/synthetic-data.md
 """
 
-import os
+import sys
 from pathlib import Path
 
 import psycopg
 from faker import Faker
 
 ROOT = Path(__file__).resolve().parent.parent
+# `python data/load.py`로 돌리면 path에 data/만 들어간다. 연결 설정은 앱과 같은 app/db.py를 쓴다
+sys.path.insert(0, str(ROOT))
+from app.db import connect  # noqa: E402
+
 RAW_DIR = ROOT / "data" / "raw"
 SQL_DIR = ROOT / "db"
 SEED = 42
@@ -58,16 +62,6 @@ HIDDEN = [
     (88, "2015-11-30 06:00", "comp2"),
     (88, "2015-11-30 06:00", "comp4"),
 ]
-
-
-def connect() -> psycopg.Connection:
-    return psycopg.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=os.getenv("POSTGRES_PORT", "5432"),
-        dbname=os.getenv("POSTGRES_DB", "pdm"),
-        user=os.getenv("POSTGRES_USER", "pdm"),
-        password=os.getenv("POSTGRES_PASSWORD", "pdm"),
-    )
 
 
 def create_tables(cur: psycopg.Cursor) -> None:

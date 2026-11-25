@@ -1,0 +1,282 @@
+"""조회 요청(필터, 정렬, 페이지)을 읽고 SQL로 바꾼다. DB에는 붙지 않는다.
+
+- 값은 모두 파라미터(%s)로 넘긴다. 이름은 스펙에 있는 것만 sql.Identifier로 넣는다.
+- 지금은 저장 속성만 거르고 정렬한다. 파생 속성(#17)과 벤더 행 필터(#19)는 _column, _where에 붙인다.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from psycopg import sql
+
+from app.engine.spec import ObjectType, Property
+
+DEFAULT_LIMIT = 50
+MAX_LIMIT = 500
+RESERVED = frozenset({"sort", "limit", "offset", "explain"})  # 필터가 아닌 쿼리 파라미터
+ORDERED_TYPES = frozenset({"int", "float", "datetime"})  # __gte, __lte를 쓸 수 있는 타입
+OPERATORS = {"eq": "=", "gte": ">=", "lte": "<="}  # in은 = ANY(%s)로 따로 만든다
+
+
+class QueryError(Exception):
+    """조회 요청이 틀렸다. to_body()가 docs/api.md 1절의 실패 응답 모양이다.
+
+    violations에는 실패한 것을 모두 담는다. 비어 있으면 code 하나로 채운다.
+    """
+
+    STATUS = {"NOT_FOUND": 404, "INVALID_FILTER": 422, "INVALID_INPUT": 422}
+
+    def __init__(
+        self, code: str, message: str, violations: list[dict[str, Any]] | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.violations = violations or [{"code": code, "detail": {}}]
+
+    @property
+    def status(self) -> int:
+        return self.STATUS[self.code]
+
+    def to_body(self) -> dict[str, Any]:
+        return {
+            "result": "ERROR",
+            "stage": "INPUT",
+            "reasonCode": self.code,
+            "message": self.message,
+            "violations": self.violations,
+        }
+
+
+@dataclass(frozen=True)
+class Condition:
+    prop: str
+    op: str  # eq | gte | lte | in
+    value: Any  # in이면 list
+
+
+@dataclass(frozen=True)
+class SortKey:
+    prop: str
+    descending: bool = False
+
+
+@dataclass(frozen=True)
+class ListQuery:
+    filters: tuple[Condition, ...] = ()
+    sort: tuple[SortKey, ...] = ()
+    limit: int = DEFAULT_LIMIT
+    offset: int = 0
+
+
+@dataclass(frozen=True)
+class Statement:
+    """실행할 SQL과 파라미터. explain은 이것을 값이 채워진 문자열로 바꿔 돌려준다."""
+
+    sql: sql.Composed
+    params: tuple[Any, ...] = ()
+
+
+# ---------------------------------------------------------------------------
+# 요청 읽기
+
+
+def parse_list_query(obj: ObjectType, params: Mapping[str, str]) -> ListQuery:
+    """쿼리 문자열(GET /objects/{type}?...)을 ListQuery로 바꾼다.
+
+    문제는 모두 모아 한 번에 알린다.
+    """
+    violations: list[dict[str, Any]] = []
+    filters = []
+    for key, raw in params.items():
+        if key in RESERVED:
+            continue
+        try:
+            filters.append(_condition(obj, key, raw))
+        except QueryError as e:
+            violations.append(_violation(key, e))
+    try:
+        sort = _sort(obj, params.get("sort"))
+    except QueryError as e:
+        violations.append(_violation("sort", e))
+        sort = ()
+    if violations:
+        message = "; ".join(v["detail"]["message"] for v in violations)
+        raise QueryError("INVALID_FILTER", message, violations)
+
+    limit = _int_param(params, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT)
+    offset = _int_param(params, "offset", 0, 0, None)
+    return ListQuery(filters=tuple(filters), sort=sort, limit=limit, offset=offset)
+
+
+def _violation(param: str, e: QueryError) -> dict[str, Any]:
+    return {"code": e.code, "detail": {"param": param, "message": e.message}}
+
+
+def _condition(obj: ObjectType, key: str, raw: str) -> Condition:
+    prop_name, sep, op = key.partition("__")
+    prop = _filterable(obj, prop_name)
+    if sep and op not in ("gte", "lte", "in"):
+        # 같음은 속성=값으로만 쓴다 (docs/api.md 2절). __eq도 받지 않는다
+        raise QueryError("INVALID_FILTER", f"연산자 '__{op}'는 없습니다 (__gte, __lte, __in)")
+    op = op or "eq"
+    if op in ("gte", "lte") and prop.type not in ORDERED_TYPES:
+        raise QueryError("INVALID_FILTER", f"{prop_name}은 {prop.type}이라 __{op}를 쓸 수 없습니다")
+    if op == "in":
+        items = [v for v in raw.split(",") if v != ""]
+        if not items:
+            raise QueryError("INVALID_FILTER", f"{key}에 값이 없습니다")
+        return Condition(prop_name, op, [coerce(prop, v) for v in items])
+    return Condition(prop_name, op, coerce(prop, raw))
+
+
+def _sort(obj: ObjectType, raw: str | None) -> tuple[SortKey, ...]:
+    keys = []
+    for part in (raw or "").split(","):
+        if not part:
+            continue
+        descending = part.startswith("-")
+        name = part.removeprefix("-")
+        _filterable(obj, name)
+        keys.append(SortKey(name, descending))
+    return tuple(keys)
+
+
+def _filterable(obj: ObjectType, name: str) -> Property:
+    if name in obj.derived:
+        # #17에서 파생 속성 SQL을 붙이면 거르고 정렬할 수 있다
+        raise QueryError(
+            "INVALID_FILTER", f"파생 속성 {name}으로는 아직 거르거나 정렬할 수 없습니다"
+        )
+    prop = obj.properties.get(name)
+    if prop is None:
+        raise QueryError("INVALID_FILTER", f"{obj.name}에 속성 {name}이 없습니다")
+    if prop.type == "json":
+        raise QueryError("INVALID_FILTER", f"{name}은 json이라 거르거나 정렬할 수 없습니다")
+    return prop
+
+
+def coerce(prop: Property, raw: str) -> Any:
+    """문자열 값을 속성 타입으로 바꾼다. 바꿀 수 없으면 INVALID_FILTER."""
+    try:
+        if prop.type == "int":
+            return int(raw)
+        if prop.type == "float":
+            return float(raw)
+        if prop.type == "bool":
+            return {"true": True, "false": False}[raw]
+        if prop.type == "datetime":
+            value = datetime.fromisoformat(raw)
+            if value.tzinfo is not None:
+                raise ValueError("시간대 없이 씁니다")
+            return value
+    except (ValueError, KeyError):
+        raise QueryError(
+            "INVALID_FILTER", f"{prop.name}의 값 '{raw}'를 {prop.type}로 읽을 수 없습니다"
+        ) from None
+    if prop.type == "enum" and raw not in prop.values:
+        raise QueryError(
+            "INVALID_FILTER",
+            f"{prop.name}의 값 '{raw}'는 {', '.join(prop.values)} 중 하나여야 합니다",
+        )
+    return raw
+
+
+def _int_param(
+    params: Mapping[str, str], name: str, default: int, low: int, high: int | None
+) -> int:
+    raw = params.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = None
+    if value is None or value < low or (high is not None and value > high):
+        bound = f"{low}~{high}" if high is not None else f"{low} 이상"
+        raise QueryError("INVALID_INPUT", f"{name}은 {bound}의 정수여야 합니다 ('{raw}')")
+    return value
+
+
+# ---------------------------------------------------------------------------
+# SQL 만들기
+
+ALIAS = sql.Identifier("t")
+
+
+def select_by_id(obj: ObjectType, object_id: Any) -> Statement:
+    query = sql.SQL("SELECT {columns} FROM {source} {alias} WHERE {key} = %s").format(
+        columns=_columns(obj), source=_source(obj), alias=ALIAS, key=_column(obj, obj.primary_key)
+    )
+    return Statement(query, (object_id,))
+
+
+def select_list(obj: ObjectType, q: ListQuery) -> Statement:
+    where, params = _where(obj, q.filters)
+    query = sql.SQL(
+        "SELECT {columns} FROM {source} {alias}{where} ORDER BY {order} LIMIT %s OFFSET %s"
+    ).format(
+        columns=_columns(obj),
+        source=_source(obj),
+        alias=ALIAS,
+        where=where,
+        order=_order(obj, q.sort),
+    )
+    return Statement(query, (*params, q.limit, q.offset))
+
+
+def count_list(obj: ObjectType, q: ListQuery) -> Statement:
+    where, params = _where(obj, q.filters)
+    query = sql.SQL("SELECT count(*) FROM {source} {alias}{where}").format(
+        source=_source(obj), alias=ALIAS, where=where
+    )
+    return Statement(query, tuple(params))
+
+
+def _source(obj: ObjectType) -> sql.Identifier:
+    schema, table = obj.source.split(".")
+    return sql.Identifier(schema, table)
+
+
+def _column(obj: ObjectType, prop: str) -> sql.Composable:
+    """속성 하나를 가리키는 SQL 식. #17에서 파생 속성이면 그 sql을 펼친 식을 돌려준다."""
+    return sql.Identifier("t", obj.properties[prop].column)
+
+
+def _columns(obj: ObjectType) -> sql.Composed:
+    """저장 속성을 모두 고르고 속성 이름으로 바꿔 부른다. 행이 곧 properties가 된다."""
+    return sql.SQL(", ").join(
+        sql.SQL("{} AS {}").format(_column(obj, name), sql.Identifier(name))
+        for name in obj.properties
+    )
+
+
+def _where(obj: ObjectType, filters: tuple[Condition, ...]) -> tuple[sql.Composable, list[Any]]:
+    if not filters:
+        return sql.SQL(""), []
+    parts, params = [], []
+    for c in filters:
+        column = _column(obj, c.prop)
+        if c.op == "in":
+            parts.append(sql.SQL("{} = ANY(%s)").format(column))
+        else:
+            parts.append(sql.SQL("{} {} %s").format(column, sql.SQL(OPERATORS[c.op])))
+        params.append(c.value)
+    return sql.SQL(" WHERE ") + sql.SQL(" AND ").join(parts), params
+
+
+def _order(obj: ObjectType, keys: tuple[SortKey, ...]) -> sql.Composed:
+    """요청한 정렬 뒤에 primary key 오름차순을 붙인다. 같은 값끼리도 페이지가 흔들리지 않는다.
+
+    null은 오름차순이면 뒤, 내림차순이면 앞에 온다 (Postgres 기본).
+    """
+    if obj.primary_key not in {k.prop for k in keys}:
+        keys = (*keys, SortKey(obj.primary_key))
+    return sql.SQL(", ").join(
+        sql.SQL("{} {}").format(_column(obj, k.prop), sql.SQL("DESC" if k.descending else "ASC"))
+        for k in keys
+    )
