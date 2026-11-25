@@ -51,6 +51,22 @@ def test_filters_are_typed(ontology, machine):
     assert lq.filters == (Condition("status", "eq", "OPEN"),)
 
 
+def test_derived_filters_and_sort(machine):
+    lq = q.parse_list_query(
+        machine, {"riskLevel": "HIGH", "hasOpenFailure": "true", "sort": "-errorCount7d"}
+    )
+    assert lq.filters == (
+        Condition("riskLevel", "eq", "HIGH"),
+        Condition("hasOpenFailure", "eq", True),
+    )
+    assert lq.sort == (SortKey("errorCount7d", True),)
+    st = q.with_clock(q.select_list(machine, lq), datetime(2016, 1, 1, 6))
+    text = st.sql.as_string(None)
+    assert text.startswith("WITH clock(now) AS (SELECT %s) SELECT ")
+    assert st.params == (datetime(2016, 1, 1, 6), "HIGH", True, 50, 0)  # 시각도 파라미터다
+    assert "(SELECT now FROM clock)" in text and ' AS "riskLevel"' in text
+
+
 def test_sort(machine):
     lq = q.parse_list_query(machine, {"sort": "-age,model"})
     assert lq.sort == (SortKey("age", True), SortKey("model", False))
@@ -67,8 +83,10 @@ def test_sort(machine):
         ({"age": "old"}, "int로 읽을 수 없습니다"),
         ({"model__in": ","}, "값이 없습니다"),
         ({"sort": "-color"}, "속성 color이 없습니다"),
-        ({"riskLevel": "HIGH"}, "파생 속성 riskLevel"),
-        ({"sort": "-errorCount7d"}, "파생 속성 errorCount7d"),
+        ({"riskLevel": "high"}, "HIGH, MEDIUM, LOW 중 하나"),  # 파생 속성도 값을 검사한다
+        ({"status__gte": "DOWN"}, "__gte를 쓸 수 없습니다"),
+        ({"hasOpenFailure": "yes"}, "bool로 읽을 수 없습니다"),
+        ({"sort": "riskReasons"}, "json이라"),
     ],
 )
 def test_invalid_filter(machine, params, text):

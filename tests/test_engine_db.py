@@ -90,9 +90,11 @@ def test_get(engine):
             "lastRestartBy": None,
             "lastRestartWorkOrderId": None,
         },
-        "derived": {},
+        "derived": m17.to_json()["derived"],
         "masked": [],
     }
+    assert set(m17.derived) == set(engine.ontology.object("Machine").derived)
+    assert m17.derived["status"] == "DOWN"  # 결정 14
     assert engine.get("Machine", 101) is None
     assert engine.get("User", "mgr1").properties["role"] == "MANAGER"
     assert engine.get("Component", "comp2").id == "comp2"
@@ -124,7 +126,7 @@ def test_errors(engine):
         "value": "abc",
     }
     with pytest.raises(QueryError) as e:
-        engine.list("Machine", {"riskLevel": "HIGH"})
+        engine.list("Machine", {"lastReplacedAt": "x"})  # json 파생 속성으로는 거르지 않는다
     assert e.value.code == "INVALID_FILTER"
 
 

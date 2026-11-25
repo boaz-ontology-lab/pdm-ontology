@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from app.engine import derived as derived_sql
 
 DEFAULT_DIR = Path(__file__).resolve().parents[2] / "ontology"
 
@@ -53,6 +55,8 @@ class Derived:
     description: str
     sql: str
     values: tuple[str, ...] = ()
+    # sql의 자리표시자를 펼친 SQL 식 (app/engine/derived.py). 행 별칭은 derived.ROW_ALIAS다
+    expr: Any = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -151,9 +155,23 @@ def build(objects_doc: Mapping[str, Any], links_doc: Mapping[str, Any]) -> Ontol
             links[link.from_type][link.name] = link
     _check_refs(objects, problems)
     _check_names(objects, links, problems)
+    if not problems:
+        _expand_derived(objects, problems)
     if problems:
         raise SpecError(problems)
     return Ontology(objects=objects, links=links)
+
+
+def _expand_derived(objects: Mapping[str, ObjectType], problems: list[str]) -> None:
+    """파생 속성 sql을 한 번 펼쳐 둔다. 틀린 자리표시자나 순환은 여기서 걸린다."""
+    for obj in objects.values():
+        for name, d in obj.derived.items():
+            try:
+                expr = derived_sql.expand(objects, obj, name)
+            except derived_sql.DerivedError as e:
+                problems.append(f"{obj.name}.{name}: {e}")
+                continue
+            obj.derived[name] = replace(d, expr=expr)  # type: ignore[index]
 
 
 def _read(path: Path) -> dict[str, Any]:

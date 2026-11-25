@@ -1,7 +1,9 @@
 """조회 요청(필터, 정렬, 페이지)을 읽고 SQL로 바꾼다. DB에는 붙지 않는다.
 
 - 값은 모두 파라미터(%s)로 넘긴다. 이름은 스펙에 있는 것만 sql.Identifier로 넣는다.
-- 지금은 저장 속성만 거르고 정렬한다. 파생 속성(#17)과 벤더 행 필터(#19)는 _column, _where에 붙인다.
+- 파생 속성도 저장 속성처럼 고르고, 거르고, 정렬한다. 그 자리에 derived.sql을 펼친 식이 들어간다.
+  {now}는 문장 앞의 WITH clock(now)에서 읽는다. with_clock으로 감싸야 실행할 수 있다.
+- 벤더 행 필터(#19)는 _where에 붙인다.
 - 링크를 따라갈 때는 link_scope가 만든 조건을 목록 조회의 WHERE에 더한다.
 """
 
@@ -14,7 +16,8 @@ from typing import Any
 
 from psycopg import sql
 
-from app.engine.spec import Link, ObjectType, Property, Side
+from app.engine.derived import ROW_ALIAS
+from app.engine.spec import Derived, Link, ObjectType, Property, Side
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
@@ -164,13 +167,8 @@ def _sort(obj: ObjectType, raw: str | None) -> tuple[SortKey, ...]:
     return tuple(keys)
 
 
-def _filterable(obj: ObjectType, name: str) -> Property:
-    if name in obj.derived:
-        # #17에서 파생 속성 SQL을 붙이면 거르고 정렬할 수 있다
-        raise QueryError(
-            "INVALID_FILTER", f"파생 속성 {name}으로는 아직 거르거나 정렬할 수 없습니다"
-        )
-    prop = obj.properties.get(name)
+def _filterable(obj: ObjectType, name: str) -> Property | Derived:
+    prop = obj.properties.get(name) or obj.derived.get(name)
     if prop is None:
         raise QueryError("INVALID_FILTER", f"{obj.name}에 속성 {name}이 없습니다")
     if prop.type == "json":
@@ -178,7 +176,7 @@ def _filterable(obj: ObjectType, name: str) -> Property:
     return prop
 
 
-def coerce(prop: Property, raw: str) -> Any:
+def coerce(prop: Property | Derived, raw: str) -> Any:
     """문자열 값을 속성 타입으로 바꾼다. 바꿀 수 없으면 INVALID_FILTER."""
     try:
         if prop.type == "int":
@@ -223,7 +221,7 @@ def _int_param(
 # ---------------------------------------------------------------------------
 # SQL 만들기
 
-T = "t"  # 조회하는 객체 행의 별칭
+T = ROW_ALIAS  # 조회하는 객체 행의 별칭
 ALIAS = sql.Identifier(T)
 
 
@@ -263,16 +261,30 @@ def _source(obj: ObjectType) -> sql.Identifier:
 
 
 def _column(obj: ObjectType, prop: str) -> sql.Composable:
-    """속성 하나를 가리키는 SQL 식. #17에서 파생 속성이면 그 sql을 펼친 식을 돌려준다."""
-    return sql.Identifier("t", obj.properties[prop].column)
+    """속성 하나를 가리키는 SQL 식. 파생 속성이면 그 sql을 펼친 식이다."""
+    if prop in obj.derived:
+        return sql.SQL("({})").format(obj.derived[prop].expr)
+    return sql.Identifier(T, obj.properties[prop].column)
 
 
 def _columns(obj: ObjectType) -> sql.Composed:
-    """저장 속성을 모두 고르고 속성 이름으로 바꿔 부른다. 행이 곧 properties가 된다."""
+    """저장 속성과 파생 속성을 모두 고르고 속성 이름으로 바꿔 부른다.
+
+    이름은 겹치지 않는다 (spec._check_names). engine이 행을 properties와 derived로 나눈다.
+    """
     return sql.SQL(", ").join(
         sql.SQL("{} AS {}").format(_column(obj, name), sql.Identifier(name))
-        for name in obj.properties
+        for name in (*obj.properties, *obj.derived)
     )
+
+
+def with_clock(statement: Statement, now: datetime) -> Statement:
+    """{now}가 읽는 가상 시계 시각을 문장 앞에 붙인다. 시각도 파라미터로 넘긴다.
+
+    시간대 없는 datetime은 psycopg가 timestamp로 보내므로 따로 형을 적지 않는다.
+    """
+    query = sql.SQL("WITH clock(now) AS (SELECT %s) ") + statement.sql
+    return Statement(query, (now, *statement.params))
 
 
 def _where(

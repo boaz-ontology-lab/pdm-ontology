@@ -58,8 +58,14 @@ def settings(environ: Mapping[str, str] | None = None, env_file: Path = ENV_FILE
     }
 
 
+# 파생 속성 식이 길어 플래너가 비용을 크게 잡고 JIT 컴파일을 한다. 설비 100대 목록에서
+# 컴파일에 1초가 걸리고 실행은 20ms다. 이 데이터 크기에서는 JIT가 이득이 없어 끈다
+OPTIONS = "-c jit=off"
+
+
 def connect(**kwargs) -> psycopg.Connection:
     s = settings()
+    kwargs.setdefault("options", OPTIONS)
     return psycopg.connect(
         host=s["POSTGRES_HOST"],
         port=s["POSTGRES_PORT"],

@@ -1,11 +1,14 @@
 """조회 엔진. 객체 하나(get), 객체 목록(list), 링크 따라가기(follow, links)를 DB에서 읽는다.
 
-응답 모양은 docs/api.md 2절 "객체 표현"이다. derived(#17)와 masked(#19)는 아직 비어 있다.
+응답 모양은 docs/api.md 2절 "객체 표현"이다. masked(#19)는 아직 비어 있다.
+
+파생 속성은 조회할 때마다 SQL로 계산한다 (결정 11, 12). 현재 시각은 생성자에 넘긴 clock에서만 얻고,
+한 번의 호출(get, list, links) 안에서는 같은 시각을 쓴다.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -16,6 +19,13 @@ from psycopg.rows import dict_row
 from app.engine import query as q
 from app.engine.query import ListQuery, QueryError, Statement
 from app.engine.spec import Link, ObjectType, Ontology
+
+# 결정 7의 기준 시각. A의 가상 시계(#28)가 생기면 그 now를 QueryEngine에 넘긴다
+BASE_TIME = datetime(2016, 1, 1, 6, 0)
+
+
+def fixed_clock() -> datetime:
+    return BASE_TIME
 
 
 class LinkCardinalityError(LookupError):
@@ -72,9 +82,15 @@ class LinkPage:
 
 
 class QueryEngine:
-    def __init__(self, ontology: Ontology, conn: psycopg.Connection) -> None:
+    def __init__(
+        self,
+        ontology: Ontology,
+        conn: psycopg.Connection,
+        clock: Callable[[], datetime] = fixed_clock,
+    ) -> None:
         self.ontology = ontology
         self.conn = conn
+        self.clock = clock
 
     def object_type(self, type_name: str) -> ObjectType:
         obj = self.ontology.object(type_name)
@@ -95,7 +111,7 @@ class QueryEngine:
                 raise QueryError(
                     "INVALID_INPUT", message, [{"code": "INVALID_INPUT", "detail": detail}]
                 ) from None
-        rows = self._fetch(q.select_by_id(obj, object_id))
+        rows = self._fetch(q.with_clock(q.select_by_id(obj, object_id), self.clock()))
         return self._record(obj, rows[0]) if rows else None
 
     def list(self, type_name: str, params: Mapping[str, str] | ListQuery | None = None) -> Page:
@@ -103,8 +119,9 @@ class QueryEngine:
         obj = self.object_type(type_name)
         if not isinstance(params, ListQuery):
             params = q.parse_list_query(obj, params or {})
-        total = self._fetch(q.count_list(obj, params))[0]["count"]
-        statement = q.select_list(obj, params)
+        now = self.clock()
+        total = self._fetch(q.with_clock(q.count_list(obj, params), now))[0]["count"]
+        statement = q.with_clock(q.select_list(obj, params), now)
         items = tuple(self._record(obj, r) for r in self._fetch(statement))
         return Page(type=type_name, total=total, items=items, statement=statement)
 
@@ -148,8 +165,9 @@ class QueryEngine:
             params = q.parse_list_query(self.object_type(link.to_type), params or {})
         scope = self._link_scope(source, link)
         to = self.object_type(link.to_type)
-        total = self._fetch(q.count_list(to, params, scope))[0]["count"]
-        statement = q.select_list(to, params, scope)
+        now = self.clock()
+        total = self._fetch(q.with_clock(q.count_list(to, params, scope), now))[0]["count"]
+        statement = q.with_clock(q.select_list(to, params, scope), now)
         items = tuple(self._record(to, r) for r in self._fetch(statement))
         return LinkPage(source=source, link=link, total=total, items=items, statement=statement)
 
@@ -158,6 +176,7 @@ class QueryEngine:
     ) -> tuple[ObjectRecord, ...]:
         to = self.object_type(link.to_type)
         statement = q.select_list(to, params, self._link_scope(source, link))
+        statement = q.with_clock(statement, self.clock())
         return tuple(self._record(to, r) for r in self._fetch(statement))
 
     def _link_scope(self, source: ObjectRecord, link: Link) -> q.Clause:
@@ -181,7 +200,12 @@ class QueryEngine:
 
     @staticmethod
     def _record(obj: ObjectType, row: Mapping[str, Any]) -> ObjectRecord:
-        return ObjectRecord(type=obj.name, id=row[obj.primary_key], properties=dict(row))
+        return ObjectRecord(
+            type=obj.name,
+            id=row[obj.primary_key],
+            properties={name: row[name] for name in obj.properties},
+            derived={name: row[name] for name in obj.derived},
+        )
 
 
 def _json(value: Any) -> Any:

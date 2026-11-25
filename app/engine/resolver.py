@@ -37,12 +37,8 @@ class EngineResolver:
             raise ExprError(f"{type(obj).__name__} 값에는 속성 '{name}'이 없습니다")
         if name in obj.properties:
             return obj.properties[name]
-        if name in obj.derived:
+        if name in obj.derived:  # 객체를 읽을 때 함께 계산해 둔 값이다
             return obj.derived[name]
-        obj_type = self.engine.object_type(obj.type)
-        if name in obj_type.derived:
-            # #17에서 파생 속성을 SQL로 계산하면 여기서 돌려준다
-            raise ExprError(f"{obj.type}.{name}은 파생 속성이라 아직 계산하지 않습니다")
         if self.engine.ontology.link(obj.type, name) is not None:
             try:
                 return self.engine.follow(obj, name)

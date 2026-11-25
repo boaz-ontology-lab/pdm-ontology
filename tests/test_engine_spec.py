@@ -126,3 +126,41 @@ def test_bad_join_or_pick(docs, link, key, value, expected):
     objects_doc, links_doc = copy.deepcopy(docs)
     links_doc[link][key] = value
     assert any(expected in p for p in _problems(objects_doc, links_doc))
+
+
+# ---------------------------------------------------------------------------
+# 파생 속성 sql 펼치기 (app/engine/derived.py)
+
+
+def test_derived_sql_is_expanded():
+    o = spec.load()
+    machine = o.object("Machine")
+    text = machine.derived["riskLevel"].expr.as_string(None)
+    assert "{riskReasons}" not in text and '"t"."machine_id"' in text
+    assert """'[{"rule": "RECENT_ERROR_NOT_REPLACED"}]'""" in text  # JSON 중괄호는 그대로
+    assert "(SELECT now FROM clock)" in text and "{now}" not in text
+    status = machine.derived["status"].expr.as_string(None)
+    assert '"raw"."failures" f' in status  # {FailureEvent} f
+    assert 'm.machine_id = "f"."machine_id"' in status  # {f.isResolved}는 f 행으로 펼친다
+
+
+@pytest.mark.parametrize(
+    "type_name, prop, sql, expected",
+    [
+        ("Machine", "status", "{nope}", "{nope}"),
+        ("Machine", "status", "{f.isResolved}", "별칭 f"),
+        ("Machine", "status", "EXISTS (SELECT 1 FROM {FailureEvent} f WHERE {f.nope})", "nope"),
+        ("Machine", "hasOpenWorkOrder", "{status} = 'DOWN'", "서로를 부릅니다"),
+    ],
+)
+def test_bad_derived_sql(docs, type_name, prop, sql, expected):
+    objects_doc, links_doc = copy.deepcopy(docs)
+    objects_doc[type_name]["derived"][prop]["sql"] = sql
+    assert any(expected in p for p in _problems(objects_doc, links_doc))
+
+
+def test_percent_in_derived_sql_is_escaped(docs):
+    objects_doc, links_doc = copy.deepcopy(docs)
+    objects_doc["Machine"]["derived"]["hasOpenWorkOrder"]["sql"] = "'a%' = 'a%'"
+    expr = spec.build(objects_doc, links_doc).object("Machine").derived["hasOpenWorkOrder"].expr
+    assert expr.as_string(None) == "'a%%' = 'a%%'"

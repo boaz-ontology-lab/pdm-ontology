@@ -302,7 +302,6 @@ def test_expressions_on_real_engine(resolver, ops):
         "Alarm(1)",  # 없는 객체 타입
         "Machine('abc')",  # id 타입이 틀림
         "User(1)",
-        "target.status == DOWN",  # 파생 속성은 #17에서 계산한다
     ],
 )
 def test_expression_errors_on_real_engine(resolver, source):
