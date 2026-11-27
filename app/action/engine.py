@@ -14,6 +14,7 @@ from typing import Any
 
 from app.action.spec import ActionSpec, ActionsSpec, Criterion, InputField, Values
 from app.action.store import AuditRecord, Store, StoreConflict
+from app.policy.policy import Visibility
 
 ERROR, DENIED, ALLOWED = "ERROR", "DENIED", "ALLOWED"
 
@@ -62,10 +63,17 @@ class _Rejected(Exception):
 
 
 class ActionEngine:
-    def __init__(self, spec: ActionsSpec, store: Store, clock: Callable[[], datetime]) -> None:
+    def __init__(
+        self,
+        spec: ActionsSpec,
+        store: Store,
+        clock: Callable[[], datetime],
+        visibility: Visibility | None = None,
+    ) -> None:
         self.spec = spec
         self.store = store
         self.clock = clock
+        self.visibility = visibility  # 없으면 조회 정책을 적용하지 않는다
 
     def execute(self, action_name: str, user_id: str | None, body: Any) -> ActionResponse:
         call = _Call(action=action_name, user_id=user_id, body=body, at=self.clock())
@@ -109,7 +117,12 @@ class ActionEngine:
         call.target_type = action.target
         call.target_id = inputs[action.target_key]
         target = self.store.get(action.target, call.target_id)
-        if target is None:
+        # 볼 수 없는 대상(다른 벤더의 설비)도 없는 대상과 똑같이 404다.
+        # 403으로 거부하면 그 대상이 있다는 사실이 새어 나간다
+        if target is None or (
+            self.visibility is not None
+            and not self.visibility.allows(self.store, user, action.target, target)
+        ):
             detail = {"type": action.target, "id": call.target_id}
             raise _common(404, ERROR, "INPUT", "NOT_FOUND", detail)
 
