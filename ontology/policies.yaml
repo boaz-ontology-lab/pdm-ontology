@@ -1,0 +1,38 @@
+# ontology/policies.yaml
+# 역할마다 어떤 행을 거르고 어떤 컬럼을 가리는지 정한다 (#19, 결정 22).
+#
+# 대상(어느 테이블, 어느 컬럼)은 이 파일에 적지 않는다. OpenMetadata 태그를 동기화한
+# ontology/policy_tags.yaml을 태그 이름으로 가리킨다. 그래서 카탈로그에서 태그를 붙이고
+# make om-tags를 실행하면, 이 파일과 엔진 코드를 고치지 않아도 보이는 결과가 바뀐다.
+#
+# ---------------------------------------------------------------------------
+# 키
+# ---------------------------------------------------------------------------
+#   roles               역할별 규칙. 여기 없는 역할은 제한이 없다
+#     row_filter        { tag, rule }: 그 태그가 붙은 테이블은 rule을 만족하는 행만 보인다
+#     mask              { tag }: 그 태그가 붙은 컬럼은 값을 null로 돌려주고 masked에 이름을 담는다
+#   rules               행 필터 규칙. 이름은 camelCase
+#     description       사람과 LLM이 읽는 설명. explain에 그대로 나간다
+#     column            거를 테이블의 컬럼
+#     lookup            그 값을 찾을 테이블
+#     key               lookup 테이블에서 column 값과 맞출 컬럼
+#     where             lookup 행이 만족해야 할 조건. { 컬럼: actor.속성 }
+#
+# 한 테이블에 행 필터가 여럿 걸리면 모두 만족해야 한다.
+# 태그가 policy_tags.yaml에 없으면(아무 데도 붙지 않았으면) 대상이 없는 것으로 본다.
+# 조회 엔진은 SQL에, 액션 엔진은 대상 찾기 단계에 같은 규칙을 쓴다. 보이지 않는 대상은 404다.
+
+roles:
+  VENDOR:
+    row_filter:
+      - { tag: VendorScoped, rule: ownVendorMachines }
+    mask:
+      - { tag: ProcessParameter }
+
+rules:
+  ownVendorMachines:
+    description: "자기 회사가 납품한 설비와 그 설비의 기록만 보인다 (결정 5)"
+    column: machine_id
+    lookup: core.machine
+    key: machine_id
+    where: { vendor_id: actor.vendorId }

@@ -162,11 +162,12 @@ GET /objects/Machine/17/links/hasFailures?isResolved=false
 
 | 대상 | VENDOR가 보는 것 |
 |---|---|
-| 설비, 에러, 고장, 교체 기록 | 자기 회사 모델의 설비와 그 기록만 |
+| 설비, 에러, 고장, 교체 기록, 작업지시, 점검 요청 | 자기 회사 모델의 설비와 그 기록만 |
 | 센서 시계열 | 시각은 보이고 `volt`, `rotate`, `pressure`, `vibration`은 `null`, `masked`에 이름이 들어간다 |
-| 다른 회사 설비를 ID로 직접 조회 | 404 `NOT_FOUND` |
+| 다른 회사 설비를 ID로 직접 조회하거나, 그 설비에 액션을 요청 | 404 `NOT_FOUND` |
 
 정책 조건은 엔진이 SQL에 직접 넣으므로, 링크를 따라가도 제한을 우회할 수 없다.
+규칙은 `ontology/policies.yaml`, 대상 테이블과 컬럼은 `ontology/policy_tags.yaml`(OpenMetadata 태그 스냅샷)에 있다 (결정 22).
 
 ## 3. 액션 API
 
