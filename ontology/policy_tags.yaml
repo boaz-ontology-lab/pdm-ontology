@@ -1,0 +1,20 @@
+# OpenMetadata 분류 PdmPolicy의 태그가 붙은 테이블과 컬럼 (#19, #23)
+# scripts/sync_policy_tags.py가 덮어쓴다. 규칙은 ontology/policies.yaml에 있다.
+classification: PdmPolicy
+synced_from: openmetadata
+tags:
+  ProcessParameter:
+    columns:
+    - raw.telemetry.pressure
+    - raw.telemetry.rotate
+    - raw.telemetry.vibration
+    - raw.telemetry.volt
+  VendorScoped:
+    tables:
+    - core.machine
+    - core.maintenance
+    - ops.inspection_requests
+    - ops.work_orders
+    - raw.errors
+    - raw.failures
+    - raw.telemetry

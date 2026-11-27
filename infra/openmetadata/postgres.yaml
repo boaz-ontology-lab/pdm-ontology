@@ -1,0 +1,29 @@
+# OpenMetadata에 프로젝트 DB(pdm)의 스키마, 테이블, 컬럼을 수집하는 설정 (#23)
+# scripts/om_ingest.py가 ingestion 컨테이너에 복사해 실행한다.
+# ${...}는 실행할 때 환경 변수로 채운다. 토큰과 비밀번호를 이 파일에 적지 않는다.
+source:
+  type: postgres
+  serviceName: pdm_postgres
+  serviceConnection:
+    config:
+      type: Postgres
+      hostPort: postgres:5432          # compose 네트워크 안의 서비스 이름
+      username: ${POSTGRES_USER}
+      authType:
+        password: ${POSTGRES_PASSWORD}
+      database: ${POSTGRES_DB}
+  sourceConfig:
+    config:
+      type: DatabaseMetadata
+      includeViews: true               # core.maintenance, core.machine
+      schemaFilterPattern:
+        includes: ["^raw$", "^ref$", "^ops$", "^core$"]
+sink:
+  type: metadata-rest
+  config: {}
+workflowConfig:
+  openMetadataServerConfig:
+    hostPort: http://openmetadata-server:8585/api
+    authProvider: openmetadata
+    securityConfig:
+      jwtToken: ${OM_JWT_TOKEN}
