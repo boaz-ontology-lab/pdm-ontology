@@ -106,7 +106,9 @@ C의 EDA 기준: 대응 에러는 고장 정확히 24시간 전에 찍혔다.
 ## 3. 비워 두는 테이블 (액션이 채움)
 
 처음에는 0건이다. 데모 초기화는 ops 테이블을 비우는 것으로 끝난다 (결정 6).
-컬럼 상세는 D4에 C와 맞춘다.
+`TRUNCATE ops.audit_log, ops.maintenance_log, ops.work_orders, ops.inspection_requests, ops.machine_state RESTART IDENTITY`
+또는 `uv run python data/load.py`를 다시 실행한다.
+타입과 제약은 `db/05_ops.sql`이 원본이다.
 
 | 테이블 | 컬럼 | 채우는 액션 |
 |---|---|---|
@@ -114,7 +116,12 @@ C의 EDA 기준: 대응 에러는 고장 정확히 24시간 전에 찍혔다.
 | `ops.work_orders` | work_order_id, machine_id, comp, type, status, assignee_id, created_by, created_at, completed_at, failure_id, inspection_request_id | 작업지시 생성, 교체 완료 |
 | `ops.inspection_requests` | inspection_request_id, machine_id, requested_by, reason, status, created_at, evidence | 점검 요청 |
 | `ops.maintenance_log` | maint_id(3287부터), datetime, machine_id, comp, work_order_id | 교체 완료 |
-| `ops.audit_log` | C가 정한다 | 모든 액션 |
+| `ops.audit_log` | action_id, action, result, stage, reason_code, actor_id, actor_role, target_type, target_id, input, response, at, recorded_at | 모든 액션. 거부와 오류도 남기고, 수정과 삭제는 트리거가 막는다 |
+
+DB에도 엔진과 같은 규칙을 걸어 두었다. 엔진이 검사해도 동시 요청은 빠져나갈 수 있어서다.
+
+- 설비마다 `REQUESTED` 점검 요청은 하나, 같은 설비와 부품에 `OPEN` 작업지시는 하나 (부분 unique 인덱스)
+- `completed_at`은 `DONE`일 때만, `failure_id`는 `CORRECTIVE`일 때만 있다 (CHECK)
 
 ## 4. 만들지 않는 것
 
