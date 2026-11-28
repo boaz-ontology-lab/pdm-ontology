@@ -98,23 +98,29 @@ def parse_list_query(obj: ObjectType, params: Mapping[str, str]) -> ListQuery:
         try:
             filters.append(_condition(obj, key, raw))
         except QueryError as e:
-            violations.append(_violation(key, e))
+            violations.append(_violation(key, raw, e))
     try:
         sort = _sort(obj, params.get("sort"))
     except QueryError as e:
-        violations.append(_violation("sort", e))
+        violations.append(_violation("sort", params.get("sort"), e))
         sort = ()
+    page = {}
+    bounds = (("limit", DEFAULT_LIMIT, 1, MAX_LIMIT), ("offset", 0, 0, None))
+    for name, default, low, high in bounds:
+        try:
+            page[name] = _int_param(params, name, default, low, high)
+        except QueryError as e:
+            violations.append(_violation(name, params.get(name), e))
     if violations:
-        message = "; ".join(v["detail"]["message"] for v in violations)
-        raise QueryError("INVALID_FILTER", message, violations)
-
-    limit = _int_param(params, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT)
-    offset = _int_param(params, "offset", 0, 0, None)
-    return ListQuery(filters=tuple(filters), sort=sort, limit=limit, offset=offset)
+        # reasonCode는 violations의 첫 번째 코드다 (docs/api.md 1절)
+        message = "; ".join(v["detail"]["problem"] for v in violations)
+        raise QueryError(violations[0]["code"], message, violations)
+    return ListQuery(filters=tuple(filters), sort=sort, limit=page["limit"], offset=page["offset"])
 
 
-def _violation(param: str, e: QueryError) -> dict[str, Any]:
-    return {"code": e.code, "detail": {"param": param, "message": e.message}}
+def _violation(field: str, value: Any, e: QueryError) -> dict[str, Any]:
+    # 키는 액션 엔진의 입력 검증(field, problem, value)과 같다
+    return {"code": e.code, "detail": {"field": field, "problem": e.message, "value": value}}
 
 
 def _condition(obj: ObjectType, key: str, raw: str) -> Condition:

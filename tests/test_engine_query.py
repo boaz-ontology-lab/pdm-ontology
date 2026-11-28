@@ -88,8 +88,23 @@ def test_invalid_enum_and_datetime(ontology):
 
 def test_all_problems_are_reported(machine):
     e = _error(machine, {"color": "red", "age": "old", "sort": "x"})
-    assert [v["detail"]["param"] for v in e.violations] == ["color", "age", "sort"]
+    assert [v["detail"]["field"] for v in e.violations] == ["color", "age", "sort"]
     assert {v["code"] for v in e.violations} == {"INVALID_FILTER"}
+
+
+def test_page_problems_are_reported_with_filter_problems(machine):
+    """limit, offset 오류도 필터 오류와 함께 모은다. reasonCode는 첫 번째 코드다."""
+    e = _error(machine, {"nope": "1", "limit": "9999", "offset": "-1"})
+    assert [(v["code"], v["detail"]["field"]) for v in e.violations] == [
+        ("INVALID_FILTER", "nope"),
+        ("INVALID_INPUT", "limit"),
+        ("INVALID_INPUT", "offset"),
+    ]
+    assert e.code == "INVALID_FILTER" and e.status == 422
+
+    page = _error(machine, {"limit": "0", "offset": "-1"})
+    assert page.code == "INVALID_INPUT"
+    assert [v["detail"]["field"] for v in page.violations] == ["limit", "offset"]
 
 
 def test_error_body_matches_api_doc(machine):
@@ -103,13 +118,26 @@ def test_error_body_matches_api_doc(machine):
         "violations": [
             {
                 "code": "INVALID_FILTER",
-                "detail": {"param": "color", "message": "Machine에 속성 color이 없습니다"},
+                "detail": {
+                    "field": "color",
+                    "problem": "Machine에 속성 color이 없습니다",
+                    "value": "red",
+                },
             }
         ],
     }
     page = _error(machine, {"limit": "0"}).to_body()
     assert page["reasonCode"] == "INVALID_INPUT"
-    assert page["violations"] == [{"code": "INVALID_INPUT", "detail": {}}]
+    assert page["violations"] == [
+        {
+            "code": "INVALID_INPUT",
+            "detail": {
+                "field": "limit",
+                "problem": "limit은 1~500의 정수여야 합니다 ('0')",
+                "value": "0",
+            },
+        }
+    ]
 
 
 @pytest.mark.parametrize(
