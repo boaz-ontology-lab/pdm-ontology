@@ -14,15 +14,9 @@ from typing import Any
 
 from app.action.spec import ActionSpec, ActionsSpec, Criterion, InputField, Values
 from app.action.store import AuditRecord, Store, StoreConflict
+from app.messages import COMMON_MESSAGES
 
 ERROR, DENIED, ALLOWED = "ERROR", "DENIED", "ALLOWED"
-
-# actions.yaml 밖에서 쓰는 공통 코드 (docs/api.md 1장)
-COMMON_MESSAGES = {
-    "UNKNOWN_USER": "사용자를 확인할 수 없습니다",
-    "NOT_FOUND": "대상을 찾을 수 없습니다",
-    "INVALID_INPUT": "입력값이 올바르지 않습니다",
-}
 
 
 @dataclass(frozen=True)

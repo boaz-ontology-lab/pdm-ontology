@@ -11,7 +11,7 @@ import copy
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.action.expr import ExprError
@@ -34,6 +34,10 @@ class ConstraintViolation(Exception):
     """CHECK, NOT NULL 제약 위반. DB에서는 IntegrityError로 500이 된다."""
 
 
+# 감사 로그 recorded_at. DB(timestamptz)처럼 시간대가 있다
+RECORDED_AT = datetime(2026, 11, 24, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+
+
 @dataclass(eq=False)
 class Obj:
     type: str
@@ -53,8 +57,8 @@ class MemoryStore:
     next_id: dict[str, int] = field(default_factory=lambda: dict(FIRST_ID))
     audit: list[AuditRecord] = field(default_factory=list)
     recorded_at: list[datetime] = field(default_factory=list)
-    # 감사 로그의 실제 기록 시각. DB에서는 now() 기본값이고, 테스트에서는 고정한다
-    real_clock: Callable[[], datetime] = field(default=lambda: datetime(2026, 11, 24, 10, 0))
+    # 감사 로그의 실제 기록 시각. DB에서는 timestamptz now() 기본값이고, 테스트에서는 고정한다
+    real_clock: Callable[[], datetime] = field(default=lambda: RECORDED_AT)
 
     # ---- 데이터 넣기 (fixture) -------------------------------------------
 
