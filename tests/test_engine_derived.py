@@ -12,9 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from app.action.expr import compile_expr, compile_template
+from app.action.expr import ExprError, compile_expr, compile_template
 from app.engine import spec
-from app.engine.engine import BASE_TIME, QueryEngine
+from app.engine.engine import BASE_TIME, ObjectRecord, QueryEngine
+from app.engine.query import QueryError
 from app.engine.resolver import EngineResolver
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -276,6 +277,16 @@ def test_resolver_recomputes_derived_on_the_same_record(resolver, ops):
     _complete(ops, wo)
     assert resolver.attr(f121, "isResolved") is True
     assert resolver.attr(m17, "status") == "READY"
+
+
+def test_derived_of_a_missing_record(engine, resolver):
+    """다시 계산하려는 객체가 없어졌으면 엔진은 NOT_FOUND, 식 평가기에는 ExprError다."""
+    ghost = ObjectRecord(type="Machine", id=999999, properties={})
+    with pytest.raises(QueryError) as e:
+        engine.derived_value(ghost, "status")
+    assert e.value.code == "NOT_FOUND"
+    with pytest.raises(ExprError, match="없어졌습니다"):
+        resolver.attr(ghost, "status")
 
 
 def test_open_work_order_covers_failure(engine, ops):
