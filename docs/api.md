@@ -17,7 +17,7 @@
 | 실행자 | `X-User-Id` 헤더로 보낸다. 역할은 서버가 users에서 찾는다. 역할을 헤더로 받지 않는다 |
 | 키 | JSON 키는 camelCase. 예: `machineId`, `reasonCode` |
 | 코드 값 | UPPER_SNAKE. 예: `RUNNING`, `CORRECTIVE` |
-| 시각 | ISO 8601, 시간대 없음. 실제 시각이 아니라 **가상 시계 시각**이다. 예: `2016-01-01T06:00:00` |
+| 시각 | ISO 8601, 시간대 없음. 실제 시각이 아니라 **가상 시계 시각**이다. 예: `2016-01-01T06:00:00`. 감사 로그의 `recordedAt`만 예외로, 실제로 기록한 시각이고 시간대가 붙는다(4장) |
 | ID | 객체와 감사 로그 ID는 정수. 사용자 ID만 문자열(`fw1`, `mech1`, `mgr1`, `venA`) |
 
 ### 응답 결과와 HTTP 코드
@@ -33,12 +33,12 @@
 
 - 거부도 정상적인 결과다. 액션은 거부되어도 감사 로그를 남기고 `actionId`를 돌려준다.
 - 다른 벤더의 설비를 조회하면 403이 아니라 **404**를 돌려준다. 403은 그 설비가 있다는 사실을 알려 주기 때문이다.
-- FastAPI의 기본 422 응답(`{"detail": [...]}`)은 예외 핸들러로 아래 실패 응답 모양으로 바꾼다.
+- FastAPI의 기본 422 응답(`{"detail": [...]}`)과 404, 405 같은 HTTP 오류도 예외 핸들러로 아래 실패 응답 모양으로 바꾼다. 입력 오류의 `detail`은 `field`, `problem`, `value`다.
 - LLM 도구를 감싸는 코드는 상태 코드와 상관없이 응답 본문을 그대로 넘긴다.
 
 ### 실패 응답 모양
 
-401, 403, 404, 409, 422 모두 같은 모양이다.
+401, 403, 404, 405, 409, 422 모두 같은 모양이다.
 
 ```json
 {
@@ -69,6 +69,8 @@ actions.yaml 밖에서 쓰는 코드다.
 | `NOT_FOUND` | 404 | 없는 객체 타입, 객체, 링크, 액션. 볼 수 없는 객체 |
 | `INVALID_INPUT` | 422 | 필수값 누락, 형식 오류, enum에 없는 값 (`comp5` 포함) |
 | `INVALID_FILTER` | 422 | 없는 속성으로 거르거나 연산자가 틀림 |
+| `METHOD_NOT_ALLOWED` | 405 | 경로는 있지만 그 메서드를 받지 않음. 예: `GET /actions/...` |
+| `HTTP_ERROR` | 그 밖 | 위 코드에 없는 HTTP 오류 |
 
 ## 2. 조회 API
 
@@ -200,7 +202,7 @@ Content-Type: application/json
 
 | 키 | 뜻 |
 |---|---|
-| `created` | 새로 만든 객체 |
+| `created` | 새로 만든 객체. `type`, `id`와 저장 속성 전부 |
 | `changes` | 바뀐 값마다 before와 after. 파생 속성(`status`)은 액션 전후에 조회한 값이다 |
 | `remaining` | 이 설비에 아직 남은 일. 관리자가 다음에 할 일을 응답만 보고 알 수 있게 한다 |
 
@@ -230,7 +232,7 @@ Content-Type: application/json
   "result": "DENIED", "stage": "PRECONDITION", "reasonCode": "UNRESOLVED_FAILURE",
   "message": "미해결 고장 1건이 남아 있어 재가동할 수 없습니다",
   "violations": [
-    {"code": "UNRESOLVED_FAILURE", "detail": {"failures": [{"failureId": 742, "comp": "comp2", "datetime": "2015-11-27T06:00:00"}]}}
+    {"code": "UNRESOLVED_FAILURE", "detail": {"failures": [{"failureId": 121, "datetime": "2015-11-27T06:00:00", "machineId": 17, "comp": "comp2"}]}}
   ],
   "actionId": 101
 }
@@ -240,14 +242,14 @@ Content-Type: application/json
 
 ```json
 // POST /actions/createWorkOrder  (X-User-Id: mgr1)
-{"machineId": 17, "comp": "comp2", "type": "CORRECTIVE", "assigneeId": "mech1", "failureId": 742}
+{"machineId": 17, "comp": "comp2", "type": "CORRECTIVE", "assigneeId": "mech1", "failureId": 121}
 
 // 201
 {
   "actionId": 102, "action": "createWorkOrder", "result": "ALLOWED", "at": "2016-01-01T06:00:00",
   "actor": {"userId": "mgr1", "role": "MANAGER"},
   "target": {"type": "Machine", "id": 17},
-  "created": [{"type": "WorkOrder", "id": 1, "status": "OPEN", "comp": "comp2", "assigneeId": "mech1", "failureId": 742}],
+  "created": [{"type": "WorkOrder", "id": 1, "status": "OPEN", "comp": "comp2", "assigneeId": "mech1", "failureId": 121}],
   "changes": [{"type": "Machine", "id": 17, "field": "status", "before": "DOWN", "after": "MAINTENANCE"}],
   "remaining": {"uncoveredFailures": []}
 }
@@ -255,13 +257,13 @@ Content-Type: application/json
 
 `failureId`를 보내지 않으면 그 부품의 미해결 고장을 자동으로 연결한다. 근거가 점검 요청이면 `changes`에 InspectionRequest의 `REQUESTED → CONVERTED`가 함께 들어간다.
 
-**③ 정비사가 교체 완료 → 200, MAINTENANCE → READY**
+**③ 정비사가 교체 완료 → 201, MAINTENANCE → READY**
 
 ```json
 // POST /actions/completeReplacement  (X-User-Id: mech1)
 {"workOrderId": 1}
 
-// 200
+// 201 (교체 기록을 새로 만든다)
 {
   "actionId": 103, "action": "completeReplacement", "result": "ALLOWED", "at": "2016-01-01T06:00:00",
   "actor": {"userId": "mech1", "role": "MECHANIC"},
@@ -269,7 +271,8 @@ Content-Type: application/json
   "created": [{"type": "Maintenance", "id": 3287, "datetime": "2016-01-01T06:00:00", "machineId": 17, "comp": "comp2", "source": "ACTION", "workOrderId": 1}],
   "changes": [
     {"type": "WorkOrder", "id": 1, "field": "status", "before": "OPEN", "after": "DONE"},
-    {"type": "FailureEvent", "id": 742, "field": "isResolved", "before": false, "after": true},
+    {"type": "WorkOrder", "id": 1, "field": "completedAt", "before": null, "after": "2016-01-01T06:00:00"},
+    {"type": "FailureEvent", "id": 121, "field": "isResolved", "before": false, "after": true},
     {"type": "Machine", "id": 17, "field": "status", "before": "MAINTENANCE", "after": "READY"}
   ],
   "remaining": {"unresolvedFailures": [], "openWorkOrders": []}
@@ -331,13 +334,17 @@ GET /audit?targetType=Machine&targetId=17
       "actor": {"userId": "fw1", "role": "FIELD_WORKER"},
       "target": {"type": "Machine", "id": 17},
       "input": {"machineId": 17},
+      "response": {"result": "DENIED", "stage": "PERMISSION", "reasonCode": "ROLE_NOT_ALLOWED", "...": "..."},
       "at": "2016-01-01T06:00:00",
-      "recordedAt": "2026-11-20T14:03:12"
+      "recordedAt": "2026-11-20T14:03:12+09:00"
     }
   ]
 }
 ```
 
-- `at`은 가상 시계 시각, `recordedAt`은 실제로 기록한 시각이다.
-- 필터: `targetType`, `targetId`, `actorId`, `action`, `result`
+- `at`은 가상 시계 시각, `recordedAt`은 실제로 기록한 시각이다. `recordedAt`에만 시간대가 붙는다.
+- `response`는 그 호출의 응답 본문이다(`actionId`는 뺀다). status처럼 저장하지 않는 값의 변화도 여기에 남는다.
+- `target`은 대상을 찾기 전에 끝난 호출(401, 없는 액션, 입력 오류)이면 `null`이다.
+- 필터: `targetType`, `targetId`, `actorId`, `action`, `result`. 결과는 `actionId` 순서다. 없는 필터나 틀린 값은 422 `INVALID_FILTER`
+- `X-User-Id`가 없거나 없는 사용자면 401이다.
 - 감사 로그는 추가만 된다. 수정, 삭제 API는 없다.

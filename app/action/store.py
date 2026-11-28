@@ -43,6 +43,15 @@ class AuditRecord:
     at: datetime  # 가상 시계 시각
 
 
+@dataclass(frozen=True)
+class AuditEntry:
+    """저장된 감사 로그 한 행."""
+
+    action_id: int
+    record: AuditRecord
+    recorded_at: datetime  # 실제로 기록한 시각 (DB 기본값 now())
+
+
 class Store(Resolver, Protocol):
     def is_object(self, value: Any) -> bool:
         """값이 객체인가 (목록, 숫자, 문자열이 아닌가)."""
@@ -68,3 +77,6 @@ class Store(Resolver, Protocol):
 
     def append_audit(self, record: AuditRecord) -> int:
         """감사 로그를 한 행 추가하고 actionId를 돌려준다. 액션 트랜잭션과 따로 커밋한다."""
+
+    def find_audit(self, filters: Mapping[str, Any]) -> list[AuditEntry]:
+        """filters 키는 AuditRecord 필드 이름이다. 값이 모두 같은 행만 actionId 순서로 돌려준다."""

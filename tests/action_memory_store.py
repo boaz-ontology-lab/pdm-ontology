@@ -11,11 +11,11 @@ import copy
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.action.expr import ExprError
-from app.action.store import AuditRecord, StoreConflict
+from app.action.store import AuditEntry, AuditRecord, StoreConflict
 
 PK = {
     "Machine": "machineId",
@@ -32,6 +32,10 @@ FIRST_ID = {"WorkOrder": 1, "InspectionRequest": 1, "Maintenance": 3287}
 
 class ConstraintViolation(Exception):
     """CHECK, NOT NULL 제약 위반. DB에서는 IntegrityError로 500이 된다."""
+
+
+# 감사 로그 recorded_at. DB(timestamptz)처럼 시간대가 있다
+RECORDED_AT = datetime(2026, 11, 24, 10, 0, tzinfo=timezone(timedelta(hours=9)))
 
 
 @dataclass(eq=False)
@@ -52,6 +56,9 @@ class MemoryStore:
     objects: dict[str, list[Obj]] = field(default_factory=lambda: {t: [] for t in PK})
     next_id: dict[str, int] = field(default_factory=lambda: dict(FIRST_ID))
     audit: list[AuditRecord] = field(default_factory=list)
+    recorded_at: list[datetime] = field(default_factory=list)
+    # 감사 로그의 실제 기록 시각. DB에서는 timestamptz now() 기본값이고, 테스트에서는 고정한다
+    real_clock: Callable[[], datetime] = field(default=lambda: RECORDED_AT)
 
     # ---- 데이터 넣기 (fixture) -------------------------------------------
 
@@ -124,7 +131,15 @@ class MemoryStore:
 
     def append_audit(self, record: AuditRecord) -> int:
         self.audit.append(record)
+        self.recorded_at.append(self.real_clock())
         return len(self.audit)
+
+    def find_audit(self, filters: Mapping[str, Any]) -> list[AuditEntry]:
+        return [
+            AuditEntry(i, record, at)
+            for i, (record, at) in enumerate(zip(self.audit, self.recorded_at, strict=True), 1)
+            if all(getattr(record, k) == v for k, v in filters.items())
+        ]
 
     def _check_constraints(self, obj: Obj) -> None:
         """db/05_ops.sql의 제약. CHECK, NOT NULL 위반은 엔진 버그라 StoreConflict가 아니다."""
