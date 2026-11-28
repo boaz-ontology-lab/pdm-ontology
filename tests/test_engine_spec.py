@@ -83,3 +83,46 @@ def test_problems_are_collected(docs):
     objects_doc["Machine"]["properties"]["vendorId"]["ref"] = "Supplier"
     problems = _problems(objects_doc, links_doc)
     assert len(problems) == 3, problems
+
+
+def test_join_and_pick_are_parsed():
+    o = spec.load()
+    resolved_by = o.link("FailureEvent", "resolvedBy")
+    assert resolved_by.join[2] == spec.JoinCondition(
+        spec.Side("to", "datetime"), ">=", spec.Side("from", "datetime")
+    )
+    assert resolved_by.pick == spec.Pick("datetime", descending=False)
+    assert not resolved_by.many
+    # 역방향도 같은 join과 pick을 가진다
+    resolves = o.link("Maintenance", "resolves")
+    assert (resolves.join, resolves.pick, resolves.many) == (
+        resolved_by.join,
+        resolved_by.pick,
+        True,
+    )
+    assigned_to = o.link("WorkOrder", "assignedTo")
+    assert assigned_to.join == (
+        spec.JoinCondition(spec.Side("from", "assigneeId"), "=", spec.Side("to", "userId")),
+    )
+
+
+@pytest.mark.parametrize(
+    "link, key, value, expected",
+    [
+        ("hasErrors", "join", ["machineId = machine"], "ErrorEvent에 속성 machine"),
+        ("hasErrors", "join", ["machineId == machineId"], "읽을 수 없습니다"),
+        ("hasErrors", "join", ["from.machineId = from.age"], "하나씩"),
+        ("resolvedBy", "pick", "first(to.datetime)", "pick"),
+        ("resolvedBy", "pick", "earliest(to.when)", "when"),
+        (
+            "indicates",
+            "through",
+            {"source": "ref.error_component_map", "from": {"code": "x"}, "to": {"comp": "comp"}},
+            "code",
+        ),
+    ],
+)
+def test_bad_join_or_pick(docs, link, key, value, expected):
+    objects_doc, links_doc = copy.deepcopy(docs)
+    links_doc[link][key] = value
+    assert any(expected in p for p in _problems(objects_doc, links_doc))

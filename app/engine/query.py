@@ -2,6 +2,7 @@
 
 - 값은 모두 파라미터(%s)로 넘긴다. 이름은 스펙에 있는 것만 sql.Identifier로 넣는다.
 - 지금은 저장 속성만 거르고 정렬한다. 파생 속성(#17)과 벤더 행 필터(#19)는 _column, _where에 붙인다.
+- 링크를 따라갈 때는 link_scope가 만든 조건을 목록 조회의 WHERE에 더한다.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 
 from psycopg import sql
 
-from app.engine.spec import ObjectType, Property
+from app.engine.spec import Link, ObjectType, Property, Side
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
@@ -69,8 +70,19 @@ class SortKey:
 class ListQuery:
     filters: tuple[Condition, ...] = ()
     sort: tuple[SortKey, ...] = ()
-    limit: int = DEFAULT_LIMIT
+    limit: int | None = DEFAULT_LIMIT  # None이면 전부 (LIMIT NULL). 식 평가기가 링크에서 쓴다
     offset: int = 0
+
+
+ALL = ListQuery(limit=None)
+
+
+@dataclass(frozen=True)
+class Clause:
+    """WHERE에 더할 조건 하나와 그 파라미터."""
+
+    sql: sql.Composable
+    params: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -211,7 +223,8 @@ def _int_param(
 # ---------------------------------------------------------------------------
 # SQL 만들기
 
-ALIAS = sql.Identifier("t")
+T = "t"  # 조회하는 객체 행의 별칭
+ALIAS = sql.Identifier(T)
 
 
 def select_by_id(obj: ObjectType, object_id: Any) -> Statement:
@@ -221,8 +234,9 @@ def select_by_id(obj: ObjectType, object_id: Any) -> Statement:
     return Statement(query, (object_id,))
 
 
-def select_list(obj: ObjectType, q: ListQuery) -> Statement:
-    where, params = _where(obj, q.filters)
+def select_list(obj: ObjectType, q: ListQuery, scope: Clause | None = None) -> Statement:
+    """scope는 필터보다 먼저 거는 조건이다. 링크를 따라갈 때 link_scope를 넣는다."""
+    where, params = _where(obj, q.filters, scope)
     query = sql.SQL(
         "SELECT {columns} FROM {source} {alias}{where} ORDER BY {order} LIMIT %s OFFSET %s"
     ).format(
@@ -235,8 +249,8 @@ def select_list(obj: ObjectType, q: ListQuery) -> Statement:
     return Statement(query, (*params, q.limit, q.offset))
 
 
-def count_list(obj: ObjectType, q: ListQuery) -> Statement:
-    where, params = _where(obj, q.filters)
+def count_list(obj: ObjectType, q: ListQuery, scope: Clause | None = None) -> Statement:
+    where, params = _where(obj, q.filters, scope)
     query = sql.SQL("SELECT count(*) FROM {source} {alias}{where}").format(
         source=_source(obj), alias=ALIAS, where=where
     )
@@ -261,10 +275,16 @@ def _columns(obj: ObjectType) -> sql.Composed:
     )
 
 
-def _where(obj: ObjectType, filters: tuple[Condition, ...]) -> tuple[sql.Composable, list[Any]]:
-    if not filters:
+def _where(
+    obj: ObjectType, filters: tuple[Condition, ...], scope: Clause | None = None
+) -> tuple[sql.Composable, list[Any]]:
+    parts: list[sql.Composable] = []
+    params: list[Any] = []
+    if scope is not None:
+        parts.append(scope.sql)
+        params.extend(scope.params)
+    if not filters and not parts:
         return sql.SQL(""), []
-    parts, params = [], []
     for c in filters:
         column = _column(obj, c.prop)
         if c.op == "in":
@@ -286,3 +306,94 @@ def _order(obj: ObjectType, keys: tuple[SortKey, ...]) -> sql.Composed:
         sql.SQL("{} {}").format(_column(obj, k.prop), sql.SQL("DESC" if k.descending else "ASC"))
         for k in keys
     )
+
+
+# ---------------------------------------------------------------------------
+# 링크
+
+# 링크의 한쪽 끝을 무엇으로 채우나.
+# 문자열이면 그 별칭의 행(컬럼), Mapping이면 객체 하나의 속성 값(파라미터)이다.
+Binding = str | Mapping[str, Any]
+
+
+def link_scope(link: Link, ends: Mapping[str, ObjectType], values: Mapping[str, Any]) -> Clause:
+    """객체 하나(values)에서 link를 따라갈 때, 도착 객체 행(별칭 t)이 맞아야 하는 조건.
+
+    ends는 links.yaml에 적힌 원래 방향의 {"from": 객체, "to": 객체}다. 역방향(inverse)이면
+    values가 원래의 to이고 t가 원래의 from이다.
+
+    pick이 있으면 "그 행이 pick으로 고른 행이다"를 조건으로 쓴다. ORDER BY ... LIMIT 1로 쓰면
+    링크 API의 필터가 고르기 전에 걸려서 다른 행이 골라질 수 있다.
+    """
+    if link.inverse_of is None:
+        parts, params = _match(link, ends, {"from": values, "to": T})
+        if link.pick is not None:
+            # 이 객체(원래 from)가 고른 행이 t여야 한다
+            picked, picked_params = _picked(link, ends, values)
+            to_key = sql.Identifier(T, ends["to"].key.column)
+            parts.append(sql.SQL("{} = {}").format(to_key, picked))
+            params += picked_params
+    else:
+        parts, params = _match(link, ends, {"from": T, "to": values})
+        if link.pick is not None:
+            # t(원래 from)가 고른 행이 이 객체(원래 to)여야 한다
+            picked, picked_params = _picked(link, ends, T)
+            parts.append(sql.SQL("%s = {}").format(picked))
+            params += [values.get(ends["to"].primary_key), *picked_params]
+    return Clause(sql.SQL("({})").format(sql.SQL(" AND ").join(parts)), tuple(params))
+
+
+def _picked(
+    link: Link, ends: Mapping[str, ObjectType], source: Binding
+) -> tuple[sql.Composable, list[Any]]:
+    """source(원래 from)에서 pick 규칙으로 고른 to의 primary key를 돌려주는 하위 질의."""
+    assert link.pick is not None
+    to, candidate = ends["to"], "p"
+    where, params = _match(link, ends, {"from": source, "to": candidate})
+    pk = sql.Identifier(candidate, to.key.column)
+    query = sql.SQL(
+        "(SELECT {pk} FROM {source} {alias} WHERE {where} ORDER BY {pick} {dir}, {pk} LIMIT 1)"
+    ).format(
+        pk=pk,
+        source=_source(to),
+        alias=sql.Identifier(candidate),
+        where=sql.SQL(" AND ").join(where),
+        pick=sql.Identifier(candidate, to.properties[link.pick.prop].column),
+        dir=sql.SQL("DESC" if link.pick.descending else "ASC"),
+    )
+    return query, params
+
+
+def _match(
+    link: Link, ends: Mapping[str, ObjectType], bind: Mapping[str, Binding]
+) -> tuple[list[sql.Composable], list[Any]]:
+    """links.yaml의 join이나 through를 SQL 조건 목록으로. 파라미터는 나오는 순서대로 담는다."""
+    params: list[Any] = []
+
+    def ref(side: Side) -> sql.Composable:
+        target = bind[side.end]
+        column = ends[side.end].properties[side.prop].column
+        if isinstance(target, str):
+            return sql.Identifier(target, column)
+        params.append(target.get(side.prop))
+        return sql.Placeholder()
+
+    if link.through is None:
+        parts = [
+            sql.SQL("{} {} {}").format(ref(c.left), sql.SQL(c.op), ref(c.right)) for c in link.join
+        ]
+        return parts, params
+
+    via = "via"
+    pairs = [
+        sql.SQL("{} = {}").format(sql.Identifier(via, column), ref(Side(end, prop)))
+        for end in ("from", "to")
+        for prop, column in link.through[end].items()
+    ]
+    schema, table = link.through["source"].split(".")
+    exists = sql.SQL("EXISTS (SELECT 1 FROM {source} {alias} WHERE {where})").format(
+        source=sql.Identifier(schema, table),
+        alias=sql.Identifier(via),
+        where=sql.SQL(" AND ").join(pairs),
+    )
+    return [exists], params

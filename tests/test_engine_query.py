@@ -172,3 +172,59 @@ def test_primary_key_sort_is_not_repeated(machine):
     lq = q.parse_list_query(machine, {"sort": "-machineId"})
     assert q.select_list(machine, lq).sql.as_string().count('machine_id" DESC') == 1
     assert 'machine_id" ASC' not in q.select_list(machine, lq).sql.as_string()
+
+
+# ---------------------------------------------------------------------------
+# 링크 조건
+
+
+def _scope(ontology, type_name, link_name, values):
+    link = ontology.link(type_name, link_name)
+    original = (link.to_type, link.from_type) if link.inverse_of else (link.from_type, link.to_type)
+    ends = {"from": ontology.object(original[0]), "to": ontology.object(original[1])}
+    clause = q.link_scope(link, ends, values)
+    return clause.sql.as_string(None), clause.params
+
+
+def test_link_scope_join(ontology):
+    text, params = _scope(ontology, "Machine", "hasFailures", {"machineId": 17})
+    assert (text, params) == ('(%s = "t"."machine_id")', (17,))
+    # 역방향은 같은 join을 반대로 채운다
+    text, params = _scope(ontology, "FailureEvent", "failedOn", {"failureId": 121, "machineId": 17})
+    assert (text, params) == ('("t"."machine_id" = %s)', (17,))
+
+
+def test_link_scope_pick(ontology):
+    """placeholder 순서와 params 순서가 맞아야 한다. 고른 행은 primary key로 비교한다."""
+    values = {"failureId": 121, "machineId": 17, "comp": "comp2", "datetime": "D"}
+    text, params = _scope(ontology, "FailureEvent", "resolvedBy", values)
+    assert text.count("%s") == len(params) == 6
+    assert params == (17, "comp2", "D", 17, "comp2", "D")
+    assert '"t"."maint_id" = (SELECT "p"."maint_id"' in text
+    assert 'ORDER BY "p"."datetime" ASC, "p"."maint_id" LIMIT 1' in text
+
+    values = {"maintId": 510, "machineId": 3, "comp": "comp1", "datetime": "D"}
+    text, params = _scope(ontology, "Maintenance", "resolves", values)
+    assert text.count("%s") == len(params) == 4
+    assert params == (3, "comp1", "D", 510)
+    assert '%s = (SELECT "p"."maint_id"' in text
+    assert '"t"."machine_id" = "p"."machine_id"' in text  # 하위 질의는 t(고장)에서 고른다
+
+
+def test_link_scope_through(ontology):
+    text, params = _scope(ontology, "ErrorEvent", "indicates", {"errorType": "error1"})
+    assert text == (
+        '(EXISTS (SELECT 1 FROM "ref"."error_component_map" "via"'
+        ' WHERE "via"."error_type" = %s AND "via"."comp" = "t"."comp"))'
+    )
+    assert params == ("error1",)
+
+
+def test_select_list_puts_scope_before_filters(ontology):
+    failures = ontology.object("FailureEvent")
+    scope = q.Clause(q.sql.SQL("x = %s"), ("scope",))
+    lq = q.parse_list_query(failures, {"comp": "comp2"})
+    st = q.select_list(failures, lq, scope)
+    assert ' WHERE x = %s AND "t"."comp" = %s ORDER BY' in st.sql.as_string(None)
+    assert st.params == ("scope", "comp2", 50, 0)
+    assert q.select_list(failures, q.ALL).params[-2:] == (None, 0)  # LIMIT NULL은 전부다
