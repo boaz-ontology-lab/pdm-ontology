@@ -66,8 +66,10 @@ class QueryEngine:
             try:
                 object_id = q.coerce(key, object_id)
             except QueryError:
+                message = f"{type_name}의 id는 {key.type}입니다 ('{object_id}')"
+                detail = {"field": "id", "problem": message, "value": object_id}
                 raise QueryError(
-                    "INVALID_INPUT", f"{type_name}의 id는 {key.type}입니다 ('{object_id}')"
+                    "INVALID_INPUT", message, [{"code": "INVALID_INPUT", "detail": detail}]
                 ) from None
         rows = self._fetch(q.select_by_id(obj, object_id))
         return self._record(obj, rows[0]) if rows else None

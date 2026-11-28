@@ -118,6 +118,11 @@ def test_errors(engine):
     with pytest.raises(QueryError) as e:
         engine.get("Machine", "abc")
     assert e.value.code == "INVALID_INPUT"
+    assert e.value.violations[0]["detail"] == {
+        "field": "id",
+        "problem": "Machine의 id는 int입니다 ('abc')",
+        "value": "abc",
+    }
     with pytest.raises(QueryError) as e:
         engine.list("Machine", {"riskLevel": "HIGH"})
     assert e.value.code == "INVALID_FILTER"
