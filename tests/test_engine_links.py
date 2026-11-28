@@ -308,3 +308,16 @@ def test_expressions_on_real_engine(resolver, ops):
 def test_expression_errors_on_real_engine(resolver, source):
     with pytest.raises(ExprError):
         _run(resolver, source, resolver.get("Machine", 17))
+
+
+def test_single_link_with_many_rows_is_an_expression_error(pg):
+    """N:1 링크에 여러 건이 걸리면 follow의 LookupError를 ExprError로 바꿔 올린다.
+
+    지금 스펙에서는 일어나지 않으므로 hasFailures를 many_to_one으로 바꿔 만든다.
+    """
+    objects = spec._read(spec.DEFAULT_DIR / "objects.yaml")
+    links = spec._read(spec.DEFAULT_DIR / "links.yaml")
+    links["hasFailures"]["cardinality"] = "many_to_one"  # 설비 17은 고장이 여럿이다
+    broken = EngineResolver(QueryEngine(spec.build(objects, links), pg))
+    with pytest.raises(ExprError, match="many_to_one"):
+        _run(broken, "target.hasFailures", broken.get("Machine", 17))

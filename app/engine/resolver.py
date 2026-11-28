@@ -44,5 +44,9 @@ class EngineResolver:
             # #17에서 파생 속성을 SQL로 계산하면 여기서 돌려준다
             raise ExprError(f"{obj.type}.{name}은 파생 속성이라 아직 계산하지 않습니다")
         if self.engine.ontology.link(obj.type, name) is not None:
-            return self.engine.follow(obj, name)
+            try:
+                return self.engine.follow(obj, name)
+            except LookupError as e:
+                # N:1 링크에 여러 건이 걸렸다. 스펙이나 데이터가 틀린 경우다
+                raise ExprError(str(e)) from None
         raise ExprError(f"{obj.type}에 '{name}'이 없습니다")
