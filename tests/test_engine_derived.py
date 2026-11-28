@@ -260,6 +260,24 @@ def test_status_over_two_repair_cycles(engine, resolver, ops):
     )
 
 
+def test_resolver_recomputes_derived_on_the_same_record(resolver, ops):
+    """액션 엔진은 effect 전에 잡아 둔 객체로 effect 뒤에 attr을 다시 부른다.
+
+    Resolver는 객체를 읽을 때 채운 파생 속성 값을 쓰지 않고 부를 때마다 계산한다.
+    """
+    m17, f121 = resolver.get("Machine", 17), resolver.get("FailureEvent", 121)
+    assert resolver.attr(m17, "status") == "DOWN"
+    assert resolver.attr(f121, "isResolved") is False
+
+    wo = _work_order(ops, 17, "comp2", failure_id=121)
+    assert m17.derived["status"] == "DOWN"  # 읽을 때 채운 값은 그대로다
+    assert resolver.attr(m17, "status") == "MAINTENANCE"
+
+    _complete(ops, wo)
+    assert resolver.attr(f121, "isResolved") is True
+    assert resolver.attr(m17, "status") == "READY"
+
+
 def test_open_work_order_covers_failure(engine, ops):
     """미해결 고장에 OPEN 작업지시가 걸리면 DOWN이 아니라 MAINTENANCE다."""
     _work_order(ops, 88, "comp2", failure_id=648)

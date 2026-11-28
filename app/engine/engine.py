@@ -114,6 +114,19 @@ class QueryEngine:
         rows = self._fetch(q.with_clock(q.select_by_id(obj, object_id), self.clock()))
         return self._record(obj, rows[0]) if rows else None
 
+    def derived_value(self, record: ObjectRecord, name: str) -> Any:
+        """record의 파생 속성 name을 지금 다시 계산한다.
+
+        record.derived는 읽은 시점의 값이다. 액션 엔진은 effect 뒤에 같은 트랜잭션에서
+        같은 객체의 파생 속성을 다시 읽으므로, 식 평가기는 이 메서드로 매번 계산한다.
+        """
+        obj = self.object_type(record.type)
+        statement = q.with_clock(q.select_derived(obj, name, record.id), self.clock())
+        rows = self._fetch(statement)
+        if not rows:
+            raise LookupError(f"{record.type}({record.id})가 없어졌습니다")
+        return rows[0][name]
+
     def list(self, type_name: str, params: Mapping[str, str] | ListQuery | None = None) -> Page:
         """객체 목록. params는 쿼리 문자열 그대로(필터, sort, limit, offset)이거나 ListQuery다."""
         obj = self.object_type(type_name)

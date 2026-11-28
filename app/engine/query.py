@@ -232,6 +232,18 @@ def select_by_id(obj: ObjectType, object_id: Any) -> Statement:
     return Statement(query, (object_id,))
 
 
+def select_derived(obj: ObjectType, name: str, object_id: Any) -> Statement:
+    """객체 하나의 파생 속성 하나만 계산한다. 식 평가기가 attr을 부를 때 쓴다."""
+    query = sql.SQL("SELECT {expr} AS {name} FROM {source} {alias} WHERE {key} = %s").format(
+        expr=_column(obj, name),
+        name=sql.Identifier(name),
+        source=_source(obj),
+        alias=ALIAS,
+        key=_column(obj, obj.primary_key),
+    )
+    return Statement(query, (object_id,))
+
+
 def select_list(obj: ObjectType, q: ListQuery, scope: Clause | None = None) -> Statement:
     """scope는 필터보다 먼저 거는 조건이다. 링크를 따라갈 때 link_scope를 넣는다."""
     where, params = _where(obj, q.filters, scope)

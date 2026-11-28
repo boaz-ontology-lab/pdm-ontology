@@ -1,6 +1,7 @@
 """식 평가기(app/action/expr.py)의 Resolver를 조회 엔진으로 구현한다.
 
-평가기가 다루는 객체는 ObjectRecord다. 객체를 찾거나 링크를 따라갈 때마다 DB에 묻는다.
+평가기가 다루는 객체는 ObjectRecord다. 객체를 찾거나, 링크를 따라가거나,
+파생 속성을 읽을 때마다 DB에 묻는다.
 조회 엔진의 QueryError는 식 평가 오류이므로 ExprError로 바꿔 올린다.
 """
 
@@ -37,8 +38,12 @@ class EngineResolver:
             raise ExprError(f"{type(obj).__name__} 값에는 속성 '{name}'이 없습니다")
         if name in obj.properties:
             return obj.properties[name]
-        if name in obj.derived:  # 객체를 읽을 때 함께 계산해 둔 값이다
-            return obj.derived[name]
+        if name in self.engine.object_type(obj.type).derived:
+            # obj.derived는 읽은 시점의 값이다. effect 뒤에도 새 값이 보이게 매번 계산한다
+            try:
+                return self.engine.derived_value(obj, name)
+            except LookupError as e:
+                raise ExprError(str(e)) from None
         if self.engine.ontology.link(obj.type, name) is not None:
             try:
                 return self.engine.follow(obj, name)
