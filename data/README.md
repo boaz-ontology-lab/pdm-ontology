@@ -23,6 +23,8 @@ make up-db                    # Postgres만 실행 (make가 없으면 docker com
 uv run python data/load.py    # DB를 처음 상태로: db/*.sql 실행 → 원본 적재 → 합성 → 확인
 ```
 
+DB 접속 값은 환경 변수, `infra/.env`, compose 기본값 순서로 정한다(`app/db.py`). 포트를 바꿨다면 `infra/.env`만 고치면 compose와 `load.py`가 같은 값을 쓴다.
+
 `load.py`는 실행할 때마다 스키마를 지우고 다시 만든다. 테이블 정의를 고쳤거나 DB가 꼬였을 때 다시 실행하면 된다.
 `ops`의 액션 기록도 지워진다. 확인 항목 중 하나라도 어긋나면 전체를 되돌린다.
 
