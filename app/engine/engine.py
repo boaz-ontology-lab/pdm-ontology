@@ -124,7 +124,7 @@ class QueryEngine:
         statement = q.with_clock(q.select_derived(obj, name, record.id), self.clock())
         rows = self._fetch(statement)
         if not rows:
-            raise LookupError(f"{record.type}({record.id})가 없어졌습니다")
+            raise QueryError("NOT_FOUND", f"{record.type}({record.id})가 없어졌습니다")
         return rows[0][name]
 
     def list(self, type_name: str, params: Mapping[str, str] | ListQuery | None = None) -> Page:

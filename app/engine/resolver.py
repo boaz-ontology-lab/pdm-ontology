@@ -42,8 +42,8 @@ class EngineResolver:
             # obj.derived는 읽은 시점의 값이다. effect 뒤에도 새 값이 보이게 매번 계산한다
             try:
                 return self.engine.derived_value(obj, name)
-            except LookupError as e:
-                raise ExprError(str(e)) from None
+            except QueryError as e:
+                raise ExprError(e.message) from None
         if self.engine.ontology.link(obj.type, name) is not None:
             try:
                 return self.engine.follow(obj, name)
