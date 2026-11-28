@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.action.expr import ExprError
-from app.engine.engine import ObjectRecord, QueryEngine
+from app.engine.engine import LinkCardinalityError, ObjectRecord, QueryEngine
 from app.engine.query import QueryError
 
 _KEY_TYPES: dict[str, tuple[type, ...]] = {"int": (int,), "string": (str,)}
@@ -46,7 +46,6 @@ class EngineResolver:
         if self.engine.ontology.link(obj.type, name) is not None:
             try:
                 return self.engine.follow(obj, name)
-            except LookupError as e:
-                # N:1 링크에 여러 건이 걸렸다. 스펙이나 데이터가 틀린 경우다
+            except LinkCardinalityError as e:
                 raise ExprError(str(e)) from None
         raise ExprError(f"{obj.type}에 '{name}'이 없습니다")

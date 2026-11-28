@@ -18,6 +18,10 @@ from app.engine.query import ListQuery, QueryError, Statement
 from app.engine.spec import Link, ObjectType, Ontology
 
 
+class LinkCardinalityError(LookupError):
+    """객체 하나로 이어져야 할 링크에 여러 건이 걸렸다. 스펙이나 데이터가 틀린 경우다."""
+
+
 @dataclass(frozen=True)
 class ObjectRecord:
     type: str
@@ -122,7 +126,7 @@ class QueryEngine:
         if link.many:
             return list(items)
         if len(items) > 1:
-            raise LookupError(
+            raise LinkCardinalityError(
                 f"{source.type}({source.id}).{link.name}은 {link.cardinality}인데 "
                 f"{len(items)}건이 이어집니다"
             )
